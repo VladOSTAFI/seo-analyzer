@@ -3,7 +3,16 @@ import { eq } from 'drizzle-orm';
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import * as schema from '../../src/db/schema';
-import { audits, hreflangEntries, images, links, pages, performance } from '../../src/db/schema';
+import {
+  audits,
+  findings,
+  hreflangEntries,
+  images,
+  links,
+  pages,
+  performance,
+} from '../../src/db/schema';
+import type { NewFinding } from '../../src/db/schema';
 import type { Finding, Rule, RuleDb } from '../../src/analyze/rule.types';
 
 /**
@@ -129,6 +138,29 @@ export async function seedPerformance(auditId: string, rows: SeedPerformance[]):
   if (rows.length === 0) return 0;
   await getDb()
     .insert(performance)
+    .values(rows.map((r) => ({ ...r, auditId })));
+  return rows.length;
+}
+
+/**
+ * A finding seed. `ruleId` + `severity` required; `url` is nullable (site-wide
+ * findings) and `detail` defaults to {} (matches the column default). `auditId`
+ * is injected by {@link seedFindings}, so omit it here.
+ *
+ * Phase 5 (report) tests use this to seed the `findings` table directly — the
+ * report layer reads ONLY from `findings`, so a report test never needs to
+ * crawl/enrich/analyze: just seed the exact findings it asserts on.
+ */
+export type SeedFinding = Partial<Omit<NewFinding, 'auditId'>> & {
+  ruleId: string;
+  severity: NewFinding['severity'];
+};
+
+/** Bulk-insert findings for `auditId`. Returns the number of rows inserted. */
+export async function seedFindings(auditId: string, rows: SeedFinding[]): Promise<number> {
+  if (rows.length === 0) return 0;
+  await getDb()
+    .insert(findings)
     .values(rows.map((r) => ({ ...r, auditId })));
   return rows.length;
 }
