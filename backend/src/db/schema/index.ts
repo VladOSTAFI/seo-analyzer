@@ -4,3 +4,7 @@
  */
 export * from './enums';
 export * from './audits';
+export * from './pages';
+export * from './links';
+export * from './images';
+export * from './hreflang';

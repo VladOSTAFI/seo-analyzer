@@ -8,6 +8,13 @@
       "when": 1780398041021,
       "tag": "0000_thick_black_knight",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1780399321208,
+      "tag": "0001_burly_brother_voodoo",
+      "breakpoints": true
     }
   ]
 }
