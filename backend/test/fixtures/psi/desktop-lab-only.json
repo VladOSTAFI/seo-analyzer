@@ -1,0 +1,62 @@
+{
+  "lighthouseResult": {
+    "requestedUrl": "https://example.com/low-traffic",
+    "finalUrl": "https://example.com/low-traffic",
+    "categories": {
+      "performance": {
+        "id": "performance",
+        "score": 0.91,
+        "auditRefs": [
+          { "id": "first-contentful-paint", "group": "metrics" },
+          { "id": "largest-contentful-paint", "group": "metrics" },
+          { "id": "total-blocking-time", "group": "metrics" },
+          { "id": "speed-index", "group": "metrics" },
+          { "id": "cumulative-layout-shift", "group": "metrics" }
+        ]
+      },
+      "seo": {
+        "id": "seo",
+        "score": 1,
+        "auditRefs": [
+          { "id": "viewport", "group": "seo-mobile" },
+          { "id": "document-title", "group": "seo-content" }
+        ]
+      }
+    },
+    "audits": {
+      "first-contentful-paint": {
+        "id": "first-contentful-paint",
+        "score": 0.95,
+        "numericValue": 901.7
+      },
+      "largest-contentful-paint": {
+        "id": "largest-contentful-paint",
+        "score": 0.93,
+        "numericValue": 1502.3
+      },
+      "total-blocking-time": {
+        "id": "total-blocking-time",
+        "score": 0.99,
+        "numericValue": 42.4
+      },
+      "speed-index": {
+        "id": "speed-index",
+        "score": 0.96,
+        "numericValue": 1100.8
+      },
+      "cumulative-layout-shift": {
+        "id": "cumulative-layout-shift",
+        "score": 1,
+        "numericValue": 0.021
+      },
+      "viewport": {
+        "id": "viewport",
+        "score": 1
+      },
+      "document-title": {
+        "id": "document-title",
+        "score": 1
+      }
+    }
+  }
+}

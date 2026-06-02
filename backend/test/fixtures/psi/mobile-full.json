@@ -1,0 +1,142 @@
+{
+  "loadingExperience": {
+    "id": "https://example.com/",
+    "metrics": {
+      "LARGEST_CONTENTFUL_PAINT_MS": {
+        "percentile": 3210,
+        "category": "AVERAGE"
+      },
+      "CUMULATIVE_LAYOUT_SHIFT_SCORE": {
+        "percentile": 12,
+        "category": "AVERAGE"
+      },
+      "INTERACTION_TO_NEXT_PAINT": {
+        "percentile": 245,
+        "category": "AVERAGE"
+      },
+      "FIRST_CONTENTFUL_PAINT_MS": {
+        "percentile": 1800,
+        "category": "AVERAGE"
+      }
+    },
+    "overall_category": "AVERAGE"
+  },
+  "lighthouseResult": {
+    "requestedUrl": "https://example.com/",
+    "finalUrl": "https://example.com/",
+    "categories": {
+      "performance": {
+        "id": "performance",
+        "score": 0.74,
+        "auditRefs": [
+          { "id": "first-contentful-paint", "group": "metrics" },
+          { "id": "largest-contentful-paint", "group": "metrics" },
+          { "id": "total-blocking-time", "group": "metrics" },
+          { "id": "speed-index", "group": "metrics" },
+          { "id": "cumulative-layout-shift", "group": "metrics" },
+          { "id": "uses-responsive-images", "group": "load-opportunities" },
+          { "id": "render-blocking-resources", "group": "load-opportunities" },
+          { "id": "uses-long-cache-ttl", "group": "diagnostics" },
+          { "id": "efficient-animated-content", "group": "diagnostics" }
+        ]
+      },
+      "seo": {
+        "id": "seo",
+        "score": 0.83,
+        "auditRefs": [
+          { "id": "viewport", "group": "seo-mobile" },
+          { "id": "document-title", "group": "seo-content" },
+          { "id": "meta-description", "group": "seo-content" },
+          { "id": "tap-targets", "group": "seo-mobile" },
+          { "id": "image-alt", "group": "seo-content" }
+        ]
+      }
+    },
+    "audits": {
+      "first-contentful-paint": {
+        "id": "first-contentful-paint",
+        "title": "First Contentful Paint",
+        "score": 0.62,
+        "numericValue": 2103.4,
+        "displayValue": "2.1 s"
+      },
+      "largest-contentful-paint": {
+        "id": "largest-contentful-paint",
+        "title": "Largest Contentful Paint",
+        "score": 0.41,
+        "numericValue": 4012.9,
+        "displayValue": "4.0 s"
+      },
+      "total-blocking-time": {
+        "id": "total-blocking-time",
+        "title": "Total Blocking Time",
+        "score": 0.55,
+        "numericValue": 487.6,
+        "displayValue": "490 ms"
+      },
+      "speed-index": {
+        "id": "speed-index",
+        "title": "Speed Index",
+        "score": 0.7,
+        "numericValue": 3550.2,
+        "displayValue": "3.6 s"
+      },
+      "cumulative-layout-shift": {
+        "id": "cumulative-layout-shift",
+        "title": "Cumulative Layout Shift",
+        "score": 0.88,
+        "numericValue": 0.087,
+        "displayValue": "0.087"
+      },
+      "uses-responsive-images": {
+        "id": "uses-responsive-images",
+        "title": "Properly size images",
+        "score": 0.33,
+        "numericValue": 1200
+      },
+      "render-blocking-resources": {
+        "id": "render-blocking-resources",
+        "title": "Eliminate render-blocking resources",
+        "score": 0.5,
+        "numericValue": 900
+      },
+      "uses-long-cache-ttl": {
+        "id": "uses-long-cache-ttl",
+        "title": "Serve static assets with an efficient cache policy",
+        "score": null,
+        "numericValue": 0
+      },
+      "efficient-animated-content": {
+        "id": "efficient-animated-content",
+        "title": "Use video formats for animated content",
+        "score": 1,
+        "numericValue": 0
+      },
+      "viewport": {
+        "id": "viewport",
+        "title": "Has a `<meta name=\"viewport\">` tag with `width` or `initial-scale`",
+        "score": 1
+      },
+      "document-title": {
+        "id": "document-title",
+        "title": "Document has a `<title>` element",
+        "score": 1
+      },
+      "meta-description": {
+        "id": "meta-description",
+        "title": "Document has a meta description",
+        "score": 0
+      },
+      "tap-targets": {
+        "id": "tap-targets",
+        "title": "Tap targets are sized appropriately",
+        "score": 0.66
+      },
+      "image-alt": {
+        "id": "image-alt",
+        "title": "Image elements have `[alt]` attributes",
+        "score": null
+      }
+    }
+  }
+}

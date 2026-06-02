@@ -44,7 +44,7 @@ describe('AnalyzeService (integration)', () => {
     const summary = await service.analyze(auditId);
 
     expect(summary.rulesRun).toBe(RULES.length);
-    expect(summary.rulesRun).toBe(27);
+    expect(summary.rulesRun).toBe(31);
     expect(summary.failedRules).toEqual([]);
     expect(summary.totalFindings).toBe(0);
     expect(summary.bySeverity).toEqual({

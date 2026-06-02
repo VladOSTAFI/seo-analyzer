@@ -22,6 +22,13 @@
       "when": 1780404862385,
       "tag": "0002_windy_scarlet_witch",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1780419860330,
+      "tag": "0003_equal_vampiro",
+      "breakpoints": true
     }
   ]
 }

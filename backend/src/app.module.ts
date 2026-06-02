@@ -4,6 +4,7 @@ import { DbModule } from './db/db.module';
 import { CrawlModule } from './crawl/crawl.module';
 import { EnrichModule } from './enrich/enrich.module';
 import { AnalyzeModule } from './analyze/analyze.module';
+import { PerformanceModule } from './performance/performance.module';
 import { CreateCommand } from './cli/create.command';
 
 /**
@@ -12,11 +13,11 @@ import { CreateCommand } from './cli/create.command';
  * ConfigModule and DbModule are @Global, so the validated env and the Drizzle
  * DB instance are injectable anywhere. CLI commands are registered as providers
  * (CreateCommand here; CrawlCommand via CrawlModule, EnrichCommand via
- * EnrichModule, AnalyzeCommand via AnalyzeModule) and picked up by
- * nest-commander's CommandFactory.
+ * EnrichModule, AnalyzeCommand via AnalyzeModule, PerfCommand via
+ * PerformanceModule) and picked up by nest-commander's CommandFactory.
  */
 @Module({
-  imports: [ConfigModule, DbModule, CrawlModule, EnrichModule, AnalyzeModule],
+  imports: [ConfigModule, DbModule, CrawlModule, EnrichModule, AnalyzeModule, PerformanceModule],
   providers: [CreateCommand],
 })
 export class AppModule {}

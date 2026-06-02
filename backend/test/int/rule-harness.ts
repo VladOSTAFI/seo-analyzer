@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm';
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import * as schema from '../../src/db/schema';
-import { audits, hreflangEntries, images, links, pages } from '../../src/db/schema';
+import { audits, hreflangEntries, images, links, pages, performance } from '../../src/db/schema';
 import type { Finding, Rule, RuleDb } from '../../src/analyze/rule.types';
 
 /**
@@ -50,7 +50,7 @@ export async function createAudit(startUrl = 'https://example.test'): Promise<st
   return id;
 }
 
-/** Delete the audit row → cascades to pages/links/images/hreflang/findings. */
+/** Delete the audit row → cascades to pages/links/images/hreflang/findings/performance. */
 export async function cleanupAudit(auditId: string): Promise<void> {
   await getDb().delete(audits).where(eq(audits.id, auditId));
 }
@@ -114,6 +114,21 @@ export async function seedHreflang(auditId: string, rows: SeedHreflang[]): Promi
   if (rows.length === 0) return 0;
   await getDb()
     .insert(hreflangEntries)
+    .values(rows.map((r) => ({ ...r, auditId })));
+  return rows.length;
+}
+
+/** A performance seed. `pageUrl` + `strategy` required; all PSI metric columns optional. */
+export type SeedPerformance = Partial<Omit<typeof performance.$inferInsert, 'auditId'>> & {
+  pageUrl: string;
+  strategy: 'mobile' | 'desktop';
+};
+
+/** Bulk-insert performance rows for `auditId`. Returns the number of rows inserted. */
+export async function seedPerformance(auditId: string, rows: SeedPerformance[]): Promise<number> {
+  if (rows.length === 0) return 0;
+  await getDb()
+    .insert(performance)
     .values(rows.map((r) => ({ ...r, auditId })));
   return rows.length;
 }

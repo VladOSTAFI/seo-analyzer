@@ -43,6 +43,12 @@ import { i18nHreflangRule } from './rules/i18n/hreflang.rule';
 import { imageAltTitleRule } from './rules/image/alt-title.rule';
 import { imageBrokenRule } from './rules/image/broken.rule';
 
+// perf.*
+import { perfLcpRule } from './rules/perf/lcp.rule';
+import { perfClsInpRule } from './rules/perf/cls-inp.rule';
+import { perfPsiUsabilityRule } from './rules/perf/psi-usability.rule';
+import { perfMobileIndexingRule } from './rules/perf/mobile-indexing.rule';
+
 /**
  * The complete, ordered set of audit rules run by {@link import('./analyze.service').AnalyzeService}.
  *
@@ -97,4 +103,10 @@ export const RULES: Rule[] = [
   // image.*
   imageAltTitleRule,
   imageBrokenRule,
+
+  // perf.*
+  perfLcpRule,
+  perfClsInpRule,
+  perfPsiUsabilityRule,
+  perfMobileIndexingRule,
 ];
