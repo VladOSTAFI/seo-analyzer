@@ -6,6 +6,7 @@ import { EnrichModule } from './enrich/enrich.module';
 import { AnalyzeModule } from './analyze/analyze.module';
 import { PerformanceModule } from './performance/performance.module';
 import { ReportModule } from './report/report.module';
+import { RunModule } from './run/run.module';
 import { CreateCommand } from './cli/create.command';
 
 /**
@@ -15,8 +16,13 @@ import { CreateCommand } from './cli/create.command';
  * DB instance are injectable anywhere. CLI commands are registered as providers
  * (CreateCommand here; CrawlCommand via CrawlModule, EnrichCommand via
  * EnrichModule, AnalyzeCommand via AnalyzeModule, PerfCommand via
- * PerformanceModule, ReportCommand via ReportModule) and picked up by
- * nest-commander's CommandFactory.
+ * PerformanceModule, ReportCommand via ReportModule, RunCommand via RunModule)
+ * and picked up by nest-commander's CommandFactory.
+ *
+ * RunModule hosts the Phase 6 orchestrator + `audit:run`; it imports the five
+ * stage modules itself, so they are wired regardless. Importing a stage module
+ * both here and in RunModule is fine — Nest dedupes — and keeps the individual
+ * stage commands registered.
  */
 @Module({
   imports: [
@@ -27,6 +33,7 @@ import { CreateCommand } from './cli/create.command';
     AnalyzeModule,
     PerformanceModule,
     ReportModule,
+    RunModule,
   ],
   providers: [CreateCommand],
 })

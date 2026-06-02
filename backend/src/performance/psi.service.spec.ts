@@ -160,4 +160,46 @@ describe('PsiService.fetch', () => {
       /PSI request failed \(network\) for https:\/\/example\.com\/ \[desktop\]: ECONNRESET/,
     );
   });
+
+  it('passes an AbortSignal and throws a timeout error when the request hangs', async () => {
+    jest.useFakeTimers();
+    try {
+      // Simulate a hung request: fetch never settles on its own; it rejects only
+      // when its AbortSignal fires (as Node's fetch does on abort). Capture the
+      // signal from inside the mock so we don't race the service's first await.
+      let captured: AbortSignal | undefined;
+      const mock = jest.fn((_url: string, init?: { signal?: AbortSignal }) => {
+        captured = init?.signal;
+        return new Promise<Response>((_resolve, reject) => {
+          captured?.addEventListener('abort', () =>
+            reject(Object.assign(new Error('aborted'), { name: 'AbortError' })),
+          );
+        });
+      });
+      global.fetch = mock as unknown as typeof global.fetch;
+
+      const service = new PsiService(fakeEnv());
+      const promise = service.fetch('https://example.com/', 'mobile');
+      // Attach a rejection handler immediately so the eventual reject is never
+      // an unhandled rejection while we drive the fake clock.
+      const settled = expect(promise).rejects.toThrow(
+        /PSI request failed \(timeout after \d+ms\) for https:\/\/example\.com\/ \[mobile\]/,
+      );
+
+      // Let the service get past pace() and actually call fetch with the signal.
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(mock).toHaveBeenCalledTimes(1);
+      expect(captured).toBeInstanceOf(AbortSignal);
+      expect(captured?.aborted).toBe(false);
+
+      // Advance past the request timeout → controller.abort() fires → fetch rejects.
+      jest.advanceTimersByTime(30_000);
+
+      await settled;
+      expect(captured?.aborted).toBe(true);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
 });

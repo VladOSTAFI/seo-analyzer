@@ -9,6 +9,13 @@ const PSI_ENDPOINT = 'https://www.googleapis.com/pagespeedonline/v5/runPagespeed
 /** Max chars of the response body echoed into a thrown error message. */
 const ERROR_BODY_SNIPPET = 300;
 
+/**
+ * Bound each PSI request so a slow/hung response cannot stall the orchestrated
+ * pipeline indefinitely. A timeout aborts the fetch → a thrown Error, which
+ * PerformanceService already treats as a NON-FATAL per-(url,strategy) failure.
+ */
+const REQUEST_TIMEOUT_MS = 25_000;
+
 /** Perf audits scoring below this (and non-null) are treated as problems. */
 const PERF_PROBLEM_SCORE = 0.9;
 
@@ -59,7 +66,9 @@ function roundTo(value: number | undefined | null, decimals: number): number | n
  *
  * Rate limiting: requests are serialized per instance and spaced by at least
  * `1000 / env.CRAWL_RATE_LIMIT` ms (the req/sec ceiling) to stay under PSI's
- * keyless throttle. {@link fetch} is documented to THROW on network/quota/HTTP
+ * keyless throttle. Each request is also bounded by an AbortController timeout
+ * (see {@link REQUEST_TIMEOUT_MS}) so a hung call cannot stall the Phase 6
+ * pipeline. {@link fetch} is documented to THROW on network/quota/HTTP/timeout
  * error — PerformanceService catches per (url, strategy) pair, so failures here
  * are not swallowed.
  */
@@ -79,12 +88,25 @@ export class PsiService implements PsiClient {
     // Log the page url + strategy (never the key — it lives in the query string).
     this.logger.debug(`PSI request url=${url} strategy=${strategy}`);
 
+    // Bound the request: abort after REQUEST_TIMEOUT_MS so a hung PSI call
+    // rejects instead of stalling the pipeline. The timer is always cleared.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
     let response: Response;
     try {
-      response = await global.fetch(endpoint);
+      response = await global.fetch(endpoint, { signal: controller.signal });
     } catch (err) {
+      const aborted = controller.signal.aborted;
       const reason = err instanceof Error ? err.message : String(err);
+      if (aborted) {
+        throw new Error(
+          `PSI request failed (timeout after ${REQUEST_TIMEOUT_MS}ms) for ${url} [${strategy}]`,
+        );
+      }
       throw new Error(`PSI request failed (network) for ${url} [${strategy}]: ${reason}`);
+    } finally {
+      clearTimeout(timer);
     }
 
     if (!response.ok) {
