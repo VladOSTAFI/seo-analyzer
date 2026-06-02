@@ -1,0 +1,121 @@
+SEO Technical Audit Application — Full Implementation Plan (PostgreSQL)
+Each phase is independently deliverable: it ends with something runnable and testable, and later phases build on earlier ones without rewrites. Designed for Claude Code to execute one phase at a time.
+Stack: NestJS + TypeScript (strict) · Crawlee (Cheerio + Playwright) · PostgreSQL + Drizzle ORM · PageSpeed Insights API · ExcelJS · nest-commander (CLI).
+
+Phase 0 — Project foundation
+Goal: Runnable NestJS app with Postgres, config, migrations, and CLI wiring. No audit logic yet.
+Deliverables:
+
+NestJS project (TypeScript strict mode) with nest-commander.
+docker-compose.yml with Postgres (pinned version, named volume, healthcheck).
+DbModule (global): Drizzle + pg Pool client; pool size from config; connection string from DATABASE_URL.
+drizzle-kit configured (generate + push migrations).
+ConfigModule with env validation: DATABASE_URL (validate reachable on boot), PSI_API_KEY, crawl limits, output dir.
+audits table only: id, startUrl, status (enum: created|crawling|enriching|analyzing|reporting|done|failed), createdAt, updatedAt.
+CLI audit:create <url> → inserts an audits row, prints id.
+Nest Logger + global error handling.
+
+Acceptance: docker compose up -d starts Postgres; migrations apply; npm run cli audit:create https://example.com creates a row; app fails fast with clear error if DATABASE_URL unreachable; tests pass.
+
+Phase 1 — Crawler core (data acquisition)
+Goal: Crawl a site and persist raw page data — the Screaming Frog replacement (audit step 1).
+Deliverables:
+
+pages table (Postgres-native types):
+
+title, metaDescription, h1, h2, rel → jsonb arrays ($type<string[]>).
+statusClass → pgEnum('2xx','3xx','4xx','5xx').
+url, finalUrl, statusCode, redirectChain (jsonb), contentType, responseTimeMs, contentLengthBytes, depth, crawlSource.
+Indexability: canonicalUrl, isSelfCanonical, metaRobots, xRobotsTag, blockedByRobotsTxt.
+contentHash (text) for later dup detection.
+Indexes: (auditId, statusClass), (auditId, contentHash).
+
+
+links table: sourceUrl, href, anchorText, type (internal/external), rel (jsonb), plus nullable targetStatusCode, isRedirect, isBroken (filled in Phase 2). Index (auditId, href).
+images table: pageUrl, src, alt, title, statusCode. hreflang table: pageUrl, lang, href, isReciprocal.
+CrawlService wrapping Crawlee CheerioCrawler: robots.txt respect, config-driven concurrency + rate limits, dedup, retries. Crawler instantiated per run (no shared mutable state).
+ExtractService (Cheerio): parses title[]/description[]/h1[]/h2[], canonical, meta robots, x-robots header, outlinks, images, hreflang, rel next/prev.
+Batch inserts (~500 rows/chunk) inside transactions.
+CLI audit:crawl <auditId>.
+
+Acceptance: Crawling a real small site fills pages/links/images/hreflang; multiple <title>/<h1> stored as jsonb arrays; crawl idempotent per audit; status transitions to crawling→back.
+
+Phase 2 — Enrichment (link resolution)
+Goal: Turn raw links into actionable signals powering redirect/broken-link/inlink checks.
+Deliverables:
+
+EnrichService: SQL-based join of links against pages to set targetStatusCode, isRedirect (3xx), isBroken (4xx/5xx).
+Compute and store inlinkCount per page (aggregate from links).
+Resolve multi-hop redirect chains; flag chains (>1 hop) and loops.
+Image status resolution (broken images flagged).
+Hreflang reciprocity (isReciprocal) computed.
+CLI audit:enrich <auditId>.
+
+Acceptance: Broken/redirect link sets and inlink counts query correctly on a crawled audit; redirect chains/loops identified; runs as set-based SQL, not row-by-row in Node.
+
+Phase 3 — Analysis engine (the audit rules)
+Goal: Implement the audit checks as data-driven SQL rules producing findings.
+Deliverables:
+
+findings table: auditId, ruleId, severity (enum), url, detail (jsonb). Index (auditId, ruleId).
+Rule interface: { id, description, severity, run(db, auditId): Promise<Finding[]> } + registry in rules/. Adding a check = one file.
+Rules pushed into Postgres as parameterized aggregations:
+
+Mirror/redirects/links: main-mirror check (seed URL variants), internal redirects (3,4), broken links (5,6), external-link flagging (7).
+Metadata: missing / duplicate (GROUP BY ... HAVING count>1) / multiple (jsonb_array_length>1) for Title (8–10), Description (11–13), H1 (14–16).
+Indexing/dupes: duplicate pages via contentHash grouping (24), canonical correctness (25), robots/noindex coverage (26), ЧПУ/URL heuristics (27).
+Pagination (28), hreflang/i18n (29), image alt/title (30).
+
+
+AnalyzeService runs all registered rules, writes findings in a transaction.
+CLI audit:analyze <auditId>.
+
+Acceptance: Each rule has a unit test against fixture data; analysis on a crawled site produces categorized findings; duplicate/multiple checks resolved via SQL aggregation.
+
+Phase 4 — Performance & external data
+Goal: Add PageSpeed/CWV and mobile-usability checks (steps 20–23).
+Deliverables:
+
+performance table: pageUrl, CWV metrics (LCP/CLS/INP), lab metrics, usability flags, psiRaw (jsonb).
+PsiService: PageSpeed Insights API client — rate-limited, cached, run on representative URLs (one per page template, not every URL).
+Rules: speed problems (20,21), critical PageSpeed usability recommendations (22), mobile/indexing issues (23, from PSI mobile data; full Google Search Console integration noted as optional later).
+Crawl-derived perf signals (HTML size, resource count, lazy-load presence) feed the same rules.
+CLI audit:perf <auditId>.
+
+Acceptance: PSI metrics stored for sampled URLs; performance findings appear in findings alongside others; PSI calls cached/rate-limited.
+
+Phase 5 — Report generation (the ТЗ deliverable)
+Goal: Produce the developer-facing audit document.
+Deliverables:
+
+ReportService (ExcelJS): one formatted sheet per issue category — redirect-fix table (from → to), broken-link removal table, missing/duplicate-meta tables, etc., matching the original checklist structure.
+Summary sheet: counts by severity/category.
+Metatag template recommendations (steps 17–19) as a structured sheet.
+Reads only from findings + supporting tables (no recompute).
+CLI audit:report <auditId> → writes .xlsx to output dir, records path on audit.
+
+Acceptance: Running on a real audit produces an Excel file with populated, correctly formatted ТЗ tables.
+
+Phase 6 — Orchestration & full pipeline
+Goal: One command, cold start to finished report.
+Deliverables:
+
+AuditService orchestrator: crawl → enrich → analyze → perf → report, updating audits.status per stage.
+CLI audit:run <url>.
+Each stage idempotent and re-runnable by auditId; failure sets failed status with stage context.
+Progress logging per stage.
+
+Acceptance: audit:run https://site.com produces a finished .xlsx from a cold start; re-running a single stage never forces a re-crawl.
+
+Phase 7 (optional) — REST API & dashboard
+Goal: Move from CLI to a usable app surface.
+Deliverables:
+
+REST controllers: POST /audits (start), GET /audits/:id (status), GET /audits/:id/findings, GET /audits/:id/report (download).
+@nestjs/bullmq + Redis for background crawl jobs (replaces in-process execution); add Redis to docker-compose.yml.
+Minimal Next.js dashboard: trigger audit, view findings table, download report.
+
+Acceptance: Start an audit from the UI, watch status update, download the report.
+
+Cross-phase principles
+Phases 0→6 are strictly ordered; each depends on the prior phase's tables and services. Hold three rules throughout: persist after every stage so re-running analysis never re-crawls; keep rules data-driven so a new check is one file in rules/ and never touches the orchestrator; push aggregations into Postgres (GROUP BY/HAVING, jsonb functions, joins) rather than iterating in Node — that's the core reason Postgres is in the stack.

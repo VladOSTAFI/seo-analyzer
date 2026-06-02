@@ -1,0 +1,179 @@
+Database Schemas — SEO Audit Application (PostgreSQL)
+Full list of tables and enums across all phases. Drizzle (drizzle-orm/pg-core) definitions.
+Enums
+typescriptexport const auditStatus = pgEnum('audit_status', [
+  'created', 'crawling', 'enriching', 'analyzing', 'reporting', 'done', 'failed',
+]);
+
+export const statusClass = pgEnum('status_class', ['2xx', '3xx', '4xx', '5xx']);
+
+export const linkType = pgEnum('link_type', ['internal', 'external']);
+
+export const crawlSource = pgEnum('crawl_source', ['sitemap', 'link', 'redirect', 'seed']);
+
+export const severity = pgEnum('severity', ['critical', 'high', 'medium', 'low', 'info']);
+audits (Phase 0)
+Root entity. One row per audit run; everything else FKs to it.
+typescriptexport const audits = pgTable('audits', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  startUrl: text('start_url').notNull(),
+  status: auditStatus('status').notNull().default('created'),
+  failedStage: text('failed_stage'),        // set when status = failed
+  reportPath: text('report_path'),          // set in Phase 5
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+});
+pages (Phase 1)
+Core crawl output — one row per crawled URL.
+typescriptexport const pages = pgTable('pages', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  auditId: uuid('audit_id').notNull().references(() => audits.id, { onDelete: 'cascade' }),
+
+  // identity & response
+  url: text('url').notNull(),
+  finalUrl: text('final_url'),
+  statusCode: integer('status_code'),
+  statusClass: statusClass('status_class'),
+  redirectChain: jsonb('redirect_chain').$type<{ url: string; statusCode: number }[]>().default([]),
+  contentType: text('content_type'),
+  responseTimeMs: integer('response_time_ms'),
+  contentLengthBytes: integer('content_length_bytes'),
+  depth: integer('depth').notNull().default(0),
+  crawlSource: crawlSource('crawl_source').notNull().default('link'),
+
+  // metadata (arrays detect missing/duplicate/multiple)
+  title: jsonb('title').$type<string[]>().notNull().default([]),
+  metaDescription: jsonb('meta_description').$type<string[]>().notNull().default([]),
+  h1: jsonb('h1').$type<string[]>().notNull().default([]),
+  h2: jsonb('h2').$type<string[]>().notNull().default([]),
+
+  // indexability
+  canonicalUrl: text('canonical_url'),
+  isSelfCanonical: boolean('is_self_canonical'),
+  metaRobots: text('meta_robots'),
+  xRobotsTag: text('x_robots_tag'),
+  blockedByRobotsTxt: boolean('blocked_by_robots_txt').default(false),
+
+  // pagination
+  relNext: text('rel_next'),
+  relPrev: text('rel_prev'),
+
+  // dup detection
+  contentHash: text('content_hash'),
+
+  // enrichment (filled Phase 2)
+  inlinkCount: integer('inlink_count').default(0),
+
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+}, (t) => ({
+  auditUrlIdx: uniqueIndex('pages_audit_url_idx').on(t.auditId, t.url),
+  auditStatusIdx: index('pages_audit_status_idx').on(t.auditId, t.statusClass),
+  auditHashIdx: index('pages_audit_hash_idx').on(t.auditId, t.contentHash),
+  auditCanonicalIdx: index('pages_audit_canonical_idx').on(t.auditId, t.canonicalUrl),
+}));
+links (Phase 1, enriched Phase 2)
+Every outlink found. Drives redirect/broken-link/inlink analysis.
+typescriptexport const links = pgTable('links', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  auditId: uuid('audit_id').notNull().references(() => audits.id, { onDelete: 'cascade' }),
+
+  sourceUrl: text('source_url').notNull(),
+  href: text('href').notNull(),               // resolved absolute URL
+  anchorText: text('anchor_text'),
+  type: linkType('type').notNull(),
+  rel: jsonb('rel').$type<string[]>().notNull().default([]),
+
+  // enrichment (Phase 2)
+  targetStatusCode: integer('target_status_code'),
+  isRedirect: boolean('is_redirect'),
+  isBroken: boolean('is_broken'),
+
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+}, (t) => ({
+  auditHrefIdx: index('links_audit_href_idx').on(t.auditId, t.href),
+  auditSourceIdx: index('links_audit_source_idx').on(t.auditId, t.sourceUrl),
+  auditFlagsIdx: index('links_audit_flags_idx').on(t.auditId, t.isBroken, t.isRedirect),
+}));
+images (Phase 1)
+For alt/title checks (step 30) and broken-image detection.
+typescriptexport const images = pgTable('images', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  auditId: uuid('audit_id').notNull().references(() => audits.id, { onDelete: 'cascade' }),
+  pageUrl: text('page_url').notNull(),
+  src: text('src').notNull(),
+  alt: text('alt'),                            // null = missing
+  title: text('title'),
+  statusCode: integer('status_code'),          // enriched Phase 2
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+}, (t) => ({
+  auditPageIdx: index('images_audit_page_idx').on(t.auditId, t.pageUrl),
+}));
+hreflang_entries (Phase 1, enriched Phase 2)
+For i18n checks (step 29).
+typescriptexport const hreflangEntries = pgTable('hreflang_entries', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  auditId: uuid('audit_id').notNull().references(() => audits.id, { onDelete: 'cascade' }),
+  pageUrl: text('page_url').notNull(),
+  lang: text('lang').notNull(),                // "uk-UA", "x-default"
+  href: text('href').notNull(),
+  isReciprocal: boolean('is_reciprocal'),      // enriched Phase 2
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+}, (t) => ({
+  auditPageIdx: index('hreflang_audit_page_idx').on(t.auditId, t.pageUrl),
+}));
+findings (Phase 3)
+Output of the analysis engine — one row per detected issue.
+typescriptexport const findings = pgTable('findings', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  auditId: uuid('audit_id').notNull().references(() => audits.id, { onDelete: 'cascade' }),
+  ruleId: text('rule_id').notNull(),           // e.g. "meta.title.duplicate"
+  severity: severity('severity').notNull(),
+  url: text('url'),                            // affected URL (nullable for site-wide)
+  detail: jsonb('detail').$type<Record<string, unknown>>().default({}),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+}, (t) => ({
+  auditRuleIdx: index('findings_audit_rule_idx').on(t.auditId, t.ruleId),
+  auditSeverityIdx: index('findings_audit_severity_idx').on(t.auditId, t.severity),
+}));
+performance (Phase 4)
+PageSpeed Insights / CWV data for sampled URLs.
+typescriptexport const performance = pgTable('performance', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  auditId: uuid('audit_id').notNull().references(() => audits.id, { onDelete: 'cascade' }),
+  pageUrl: text('page_url').notNull(),
+  strategy: text('strategy').notNull(),        // 'mobile' | 'desktop'
+
+  // Core Web Vitals (field data)
+  lcpMs: integer('lcp_ms'),
+  cls: real('cls'),
+  inpMs: integer('inp_ms'),
+
+  // lab metrics
+  performanceScore: real('performance_score'),
+  fcpMs: integer('fcp_ms'),
+  tbtMs: integer('tbt_ms'),
+  speedIndexMs: integer('speed_index_ms'),
+
+  usabilityFlags: jsonb('usability_flags').$type<string[]>().default([]),
+  psiRaw: jsonb('psi_raw'),                     // full API response
+  fetchedAt: timestamp('fetched_at').notNull().defaultNow(),
+}, (t) => ({
+  auditPageStrategyIdx: uniqueIndex('perf_audit_page_strategy_idx')
+    .on(t.auditId, t.pageUrl, t.strategy),
+}));
+Phase 7 (optional) — only if adding API/dashboard
+No new core tables required; BullMQ manages its own Redis-backed queues outside Postgres. Optionally add:
+typescript// audit_jobs — if you want to track queue jobs in Postgres for history/UI
+export const auditJobs = pgTable('audit_jobs', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  auditId: uuid('audit_id').notNull().references(() => audits.id, { onDelete: 'cascade' }),
+  stage: text('stage').notNull(),
+  jobId: text('job_id'),                        // BullMQ job id
+  state: text('state'),                         // queued|active|completed|failed
+  error: text('error'),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+});
+
+Summary
+TablePhasePurposeaudits0Root run entity, status trackingpages1Crawled URLs + metadata + indexabilitylinks1 → 2Outlinks, enriched with target statusimages1Alt/title + broken-image checkshreflang_entries1 → 2i18n / hreflang reciprocityfindings3Detected issues (analysis output)performance4PSI / Core Web Vitalsaudit_jobs7 (opt)Queue job tracking for UI
+All child tables FK to audits.id with onDelete: 'cascade', so deleting an audit cleans up everything. The (auditId, …) composite indexes are what keep the Phase 3 aggregations fast.
