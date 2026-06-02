@@ -169,6 +169,7 @@ describe('CrawlService.crawl', () => {
       CRAWL_RATE_LIMIT: 5,
       PSI_MAX_SAMPLES: 20,
       OUTPUT_DIR: './output',
+      API_PORT: 3000,
     };
   }
 

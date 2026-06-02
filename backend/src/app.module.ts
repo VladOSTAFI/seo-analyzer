@@ -7,6 +7,7 @@ import { AnalyzeModule } from './analyze/analyze.module';
 import { PerformanceModule } from './performance/performance.module';
 import { ReportModule } from './report/report.module';
 import { RunModule } from './run/run.module';
+import { ApiModule } from './api/api.module';
 import { CreateCommand } from './cli/create.command';
 
 /**
@@ -34,6 +35,7 @@ import { CreateCommand } from './cli/create.command';
     PerformanceModule,
     ReportModule,
     RunModule,
+    ApiModule,
   ],
   providers: [CreateCommand],
 })

@@ -49,6 +49,10 @@ export const envSchema = z.object({
     .string()
     .optional()
     .transform((v) => (v === undefined || v === '' ? './output' : v)),
+
+  // HTTP port for the REST API (Phase 7). Only used by the `api` entrypoint
+  // (src/api.main.ts); the CLI never binds a port.
+  API_PORT: intWithDefault(3000),
 });
 
 export type Env = z.infer<typeof envSchema>;

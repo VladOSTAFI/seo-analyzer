@@ -63,10 +63,43 @@ export class AuditService {
    * any row is inserted or any stage runs.
    */
   async createAndRun(url: string): Promise<RunResult> {
+    const auditId = await this.create(url);
+    return this.runAll(auditId);
+  }
+
+  /**
+   * Validate `url`, insert a fresh `audits` row (status `created`), and return
+   * its id WITHOUT running the pipeline. The REST layer (Phase 7) uses this to
+   * acknowledge a `POST /audits` synchronously (returning the id) and then drive
+   * the pipeline in the background via {@link runInBackground}. URL validation
+   * reuses {@link parseStartUrl}, so an invalid URL rejects here BEFORE any row
+   * is inserted — the controller maps that to HTTP 400.
+   */
+  async create(url: string): Promise<string> {
     const startUrl = parseStartUrl(url);
     const auditId = await this.createAudit(startUrl);
     this.logger.log(`Created audit ${auditId} for ${startUrl}`);
-    return this.runAll(auditId);
+    return auditId;
+  }
+
+  /**
+   * Fire-and-forget the full pipeline for an already-created audit. Intended for
+   * the REST layer: the HTTP request returns immediately while the audit runs
+   * out-of-band, and clients poll `GET /audits/:id` for status.
+   *
+   * This NEVER rejects: {@link runAll}'s per-stage wrapper already marks the
+   * audit `failed` on any error, so here we only log the failure to avoid an
+   * unhandled promise rejection crashing the process. The returned promise
+   * resolves once the run settles (handy for tests that want to await it).
+   */
+  runInBackground(auditId: string): Promise<void> {
+    return this.runAll(auditId).then(
+      () => undefined,
+      (err: unknown) => {
+        const reason = err instanceof Error ? err.message : String(err);
+        this.logger.error(`Background pipeline failed audit=${auditId}: ${reason}`);
+      },
+    );
   }
 
   /**
