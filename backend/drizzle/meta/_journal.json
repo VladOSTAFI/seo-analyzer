@@ -15,6 +15,13 @@
       "when": 1780399321208,
       "tag": "0001_burly_brother_voodoo",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1780404862385,
+      "tag": "0002_windy_scarlet_witch",
+      "breakpoints": true
     }
   ]
 }

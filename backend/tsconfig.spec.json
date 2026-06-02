@@ -3,5 +3,9 @@
   "compilerOptions": {
     "types": ["jest", "node"]
   },
-  "include": ["src/**/*.ts", "test/**/*.ts"]
+  "include": ["src/**/*.ts", "test/**/*.ts"],
+  // Base tsconfig excludes `test`; re-include it for the spec program so
+  // standalone test helpers (e.g. jest setupFiles) are type-checked + lintable
+  // even when no src file imports them.
+  "exclude": ["node_modules", "dist"]
 }

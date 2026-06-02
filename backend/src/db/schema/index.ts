@@ -8,3 +8,4 @@ export * from './pages';
 export * from './links';
 export * from './images';
 export * from './hreflang';
+export * from './findings';
