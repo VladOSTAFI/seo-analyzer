@@ -18,3 +18,25 @@ export class DatabaseError extends AppError {}
 
 /** A CLI argument failed validation (e.g. malformed URL). */
 export class InvalidArgumentError extends AppError {}
+
+/**
+ * Authentication failed: the request carries no identity or an invalid/expired
+ * one. Maps to HTTP 401 in AppErrorFilter (Phase A1+).
+ */
+export class UnauthorizedError extends AppError {}
+
+/**
+ * The caller is authenticated but not allowed to perform the action (e.g. role
+ * or ownership check failed). Maps to HTTP 403 in AppErrorFilter (Phase A1+).
+ */
+export class ForbiddenError extends AppError {}
+
+/**
+ * Login credentials did not match (unknown email or wrong password). Deliberately
+ * generic — same error for both cases to avoid account enumeration (§8). Maps to
+ * HTTP 401 in AppErrorFilter (Phase A1+).
+ */
+export class InvalidCredentialsError extends AppError {}
+
+/** Registration was attempted with an already-registered email. Maps to HTTP 409. */
+export class EmailTakenError extends AppError {}

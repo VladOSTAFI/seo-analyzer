@@ -2,7 +2,7 @@ import 'reflect-metadata';
 import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
-import { AppError } from './common/errors';
+import { AppError, ConfigError } from './common/errors';
 import { ENV } from './config/config.module';
 import type { Env } from './config/env.validation';
 
@@ -31,6 +31,20 @@ async function bootstrap(): Promise<void> {
   app.enableShutdownHooks();
 
   const env = app.get<Env>(ENV);
+
+  // API-only fail-fast: a signed token surface is meaningless without a secret.
+  // JWT_SECRET is optional in the shared envSchema so the CLI (unauthenticated)
+  // boots without it; here, the HTTP surface that issues/verifies tokens must
+  // refuse to start unsigned. See docs/AUTHORIZATION_PLAN.md §6.
+  if (!env.JWT_SECRET) {
+    throw new ConfigError(
+      'JWT_SECRET is required to run the REST API but is not set.\n' +
+        '  Set a strong secret (>= 32 chars) in your environment or .env, e.g.\n' +
+        '    JWT_SECRET=$(openssl rand -hex 32)\n' +
+        '  The CLI entrypoint (npm run cli) does not require it.',
+    );
+  }
+
   await app.listen(env.API_PORT);
   logger.log(`REST API listening on http://localhost:${env.API_PORT}`);
 }

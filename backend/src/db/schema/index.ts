@@ -10,3 +10,4 @@ export * from './images';
 export * from './hreflang';
 export * from './findings';
 export * from './performance';
+export * from './users';

@@ -23,3 +23,10 @@ export const linkType = pgEnum('link_type', ['internal', 'external']);
 export const crawlSource = pgEnum('crawl_source', ['sitemap', 'link', 'redirect', 'seed']);
 
 export const severity = pgEnum('severity', ['critical', 'high', 'medium', 'low', 'info']);
+
+/**
+ * Authorization roles (Phase A0). `user` is the default for self-registered
+ * accounts (own audits only); `admin` bypasses ownership checks. See
+ * docs/AUTHORIZATION_PLAN.md §4.
+ */
+export const userRole = pgEnum('user_role', ['user', 'admin']);

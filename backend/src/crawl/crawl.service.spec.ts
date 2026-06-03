@@ -170,6 +170,11 @@ describe('CrawlService.crawl', () => {
       PSI_MAX_SAMPLES: 20,
       OUTPUT_DIR: './output',
       API_PORT: 3000,
+      JWT_ACCESS_TTL: '15m',
+      JWT_REFRESH_TTL: '30d',
+      AUTH_BCRYPT_OR_ARGON: 'argon2id',
+      AUTH_LOGIN_MAX_ATTEMPTS: 5,
+      AUTH_LOGIN_WINDOW_SEC: 900,
     };
   }
 
