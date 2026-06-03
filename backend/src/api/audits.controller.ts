@@ -11,9 +11,11 @@ import {
   Post,
   Query,
   StreamableFile,
+  UseGuards,
 } from '@nestjs/common';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { AuthUser } from '../auth/auth.types';
+import { AuditOwnershipGuard } from '../auth/audit-ownership.guard';
 import { AuditService } from '../audit/audit.service';
 import { AuditQueryService } from './audit-query.service';
 import { CreateAuditBody, ListAuditsQuery, ListFindingsQuery } from './api.dto';
@@ -35,13 +37,16 @@ const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.s
  *   GET    /audits/:id/findings → findings (filters + pagination; 404 if no audit)
  *   GET    /audits/:id/report   → stream the .xlsx (StreamableFile)
  *
- * OWNERSHIP (Phase A3): every route reads the authenticated principal via
- * {@link CurrentUser} (attached by the global JwtAuthGuard, A2). `POST` stamps
- * the new audit's `ownerId = user.id`; the read routes forward the principal so
- * the query layer scopes results to the owner (admins see all). NOTE: A3 only
- * wires the ownership DATA + list/detail scoping. The per-:id ownership *guard*
- * (the 404-not-403 enforcement on `:id`/`findings`/`report`) is Phase A4 and is
- * NOT built here — see AUTHORIZATION_PLAN §4 decision matrix.
+ * OWNERSHIP (Phases A3 + A4): every route reads the authenticated principal via
+ * {@link CurrentUser} (attached by the global JwtAuthGuard, A2). `POST` stamps the
+ * new audit's `ownerId = user.id`; the list/detail reads forward the principal so
+ * the query layer scopes results to the owner (admins see all).
+ *
+ * The three per-`:id` routes additionally carry {@link AuditOwnershipGuard}
+ * (Phase A4): it enforces owner-or-admin BEFORE the handler runs, returning a
+ * **404 (not 403)** for a cross-user or missing id so audit ids can't be
+ * enumerated (AUTHORIZATION_PLAN §8). The list (`GET /audits`) and create
+ * (`POST /audits`) routes stay owner-scoped from A3 and need no per-id guard.
  *
  * ASYNC-PIPELINE-VIA-202: a full audit (crawl→…→report) is far too long to run
  * inside a request. So `POST /audits` only validates the URL + inserts the row
@@ -102,10 +107,15 @@ export class AuditsController {
 
   /**
    * One audit plus its finding rollups. 200 when found, 404 (NotFound) when
-   * missing OR (Phase A3 scoping) not visible to the caller — a non-owner
-   * non-admin gets the same 404 as a missing id, so existence isn't leaked.
+   * missing OR not visible to the caller — a non-owner non-admin gets the same
+   * 404 as a missing id, so existence isn't leaked.
+   *
+   * {@link AuditOwnershipGuard} (Phase A4) already rejected cross-user/missing ids
+   * with a 404 before this handler runs; the `getAudit` re-check stays as a
+   * defense-in-depth fallback and produces the identical 404.
    */
   @Get(':id')
+  @UseGuards(AuditOwnershipGuard)
   async getAudit(@Param('id') id: string, @CurrentUser() user: AuthUser): Promise<AuditDetailDto> {
     const audit = await this.query.getAudit(id, user);
     if (!audit) {
@@ -115,12 +125,14 @@ export class AuditsController {
   }
 
   /**
-   * List an audit's findings (optional severity/ruleId filters + pagination). We
-   * check {@link AuditQueryService.auditExists} FIRST (owner-scoped, Phase A3) so
-   * a missing-or-not-visible audit is a clean 404, distinct from an existing
-   * audit with zero findings (→ 200 + empty page). 200 otherwise.
+   * List an audit's findings (optional severity/ruleId filters + pagination).
+   * {@link AuditOwnershipGuard} (Phase A4) enforces owner-or-admin first (404 for
+   * cross-user/missing). The owner-scoped {@link AuditQueryService.auditExists}
+   * check then distinguishes a missing audit (404) from an existing audit with
+   * zero findings (→ 200 + empty page). 200 otherwise.
    */
   @Get(':id/findings')
+  @UseGuards(AuditOwnershipGuard)
   async listFindings(
     @Param('id') id: string,
     @Query(new ZodValidationPipe(ListFindingsQuery)) query: ListFindingsQuery,
@@ -134,15 +146,23 @@ export class AuditsController {
 
   /**
    * Stream the audit's `.xlsx` report as an attachment. Status contract:
-   *  - audit missing or not visible → 404 NotFound (owner-scoped, Phase A3)
+   *  - audit missing or not visible → 404 NotFound (owner-scoped, Phase A3/A4)
    *  - audit exists, no reportPath  → 409 Conflict (pipeline hasn't produced it yet)
    *  - reportPath set but file gone → 404 NotFound (recorded path no longer on disk)
    *  - otherwise                    → 200 with the streamed workbook
+   *
+   * SECURITY (§8): {@link AuditOwnershipGuard} (Phase A4) runs BEFORE this handler,
+   * so ownership is enforced before ANY disk access. A non-owner is rejected with a
+   * 404 and never reaches the `existsSync`/`createReadStream` below — they can't
+   * probe whether another user's report file exists. The handler does no second,
+   * unguarded disk lookup by id: `existsSync` only fires for an audit the caller is
+   * already authorized to see.
    *
    * Uses {@link StreamableFile} so Nest sets the Content-Type/Content-Disposition
    * from the options here — no `@Res`, keeping the handler framework-agnostic.
    */
   @Get(':id/report')
+  @UseGuards(AuditOwnershipGuard)
   async getReport(@Param('id') id: string, @CurrentUser() user: AuthUser): Promise<StreamableFile> {
     const audit = await this.query.getAudit(id, user);
     if (!audit) {
