@@ -12,3 +12,4 @@ export * from './findings';
 export * from './performance';
 export * from './users';
 export * from './refresh-tokens';
+export * from './auth-attempts';

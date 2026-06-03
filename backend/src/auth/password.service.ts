@@ -24,6 +24,12 @@ import type { Env } from '../config/env.validation';
 export class PasswordService {
   private readonly algorithm: Env['AUTH_BCRYPT_OR_ARGON'];
 
+  /**
+   * Cached dummy argon2id hash for {@link verifyTimingSafeDummy}. Computed lazily
+   * on first use (the constructor can't await) and reused thereafter.
+   */
+  private dummyHash?: Promise<string>;
+
   constructor(@Inject(ENV) env: Env) {
     this.algorithm = env.AUTH_BCRYPT_OR_ARGON;
     if (this.algorithm !== 'argon2id') {
@@ -51,5 +57,26 @@ export class PasswordService {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Timing-equalizing decoy verify (Phase A6, §8 — no account enumeration via
+   * timing). When login can't find the email, it has no stored hash to check
+   * against; skipping the argon2 work would make an unknown email return faster
+   * than a wrong password and leak which addresses are registered. So the
+   * unknown-email branch calls this instead: it verifies the supplied password
+   * against a single cached throwaway hash — burning argon2 CPU equivalent to a
+   * real verify — and ALWAYS returns `false`.
+   *
+   * The dummy hash is computed exactly once (lazily, since the constructor can't
+   * await) and reused, so only the first call pays the one-off hash cost.
+   */
+  async verifyTimingSafeDummy(password: string): Promise<false> {
+    if (!this.dummyHash) {
+      // A fixed throwaway secret; never a real credential, never matches input.
+      this.dummyHash = this.hash('timing-safe-dummy-password');
+    }
+    await this.verify(await this.dummyHash, password);
+    return false;
   }
 }

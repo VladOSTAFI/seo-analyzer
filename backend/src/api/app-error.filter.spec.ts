@@ -6,6 +6,7 @@ import {
   ForbiddenError,
   InvalidArgumentError,
   InvalidCredentialsError,
+  TooManyRequestsError,
   UnauthorizedError,
 } from '../common/errors';
 import { AppErrorFilter } from './app-error.filter';
@@ -35,6 +36,7 @@ describe('AppErrorFilter status mapping', () => {
     ['InvalidCredentialsError', new InvalidCredentialsError('Invalid email or password.'), 401],
     ['ForbiddenError', new ForbiddenError('not allowed'), 403],
     ['EmailTakenError', new EmailTakenError('taken'), 409],
+    ['TooManyRequestsError', new TooManyRequestsError('too many failed logins'), 429],
     ['unmapped AppError', new DatabaseError('boom'), 500],
   ])('maps %s → %i', (_name, exception, expected) => {
     expect(invoke(exception).status).toBe(expected);

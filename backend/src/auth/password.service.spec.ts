@@ -39,4 +39,23 @@ describe('PasswordService (argon2id)', () => {
   it('rejects an unsupported algorithm selector at construction', () => {
     expect(() => new PasswordService(envWith('bcrypt'))).toThrow(ConfigError);
   });
+
+  describe('verifyTimingSafeDummy (A6 — timing equalization)', () => {
+    it('always returns false for any input and never throws', async () => {
+      await expect(service.verifyTimingSafeDummy('anything')).resolves.toBe(false);
+      await expect(service.verifyTimingSafeDummy('')).resolves.toBe(false);
+      await expect(service.verifyTimingSafeDummy('another-attempt')).resolves.toBe(false);
+    });
+
+    it('reuses the cached dummy hash across calls (hashes once)', async () => {
+      const fresh = new PasswordService(envWith('argon2id'));
+      const hashSpy = jest.spyOn(fresh, 'hash');
+
+      await fresh.verifyTimingSafeDummy('a');
+      await fresh.verifyTimingSafeDummy('b');
+
+      // The throwaway dummy hash is computed exactly once and reused.
+      expect(hashSpy).toHaveBeenCalledTimes(1);
+    });
+  });
 });

@@ -50,6 +50,13 @@
       "when": 1780485092636,
       "tag": "0006_awesome_tattoo",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1780488428899,
+      "tag": "0007_careless_blink",
+      "breakpoints": true
     }
   ]
 }

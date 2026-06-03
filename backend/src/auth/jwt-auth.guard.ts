@@ -24,8 +24,17 @@ interface RequestWithAuth {
  * On a protected route it:
  *  1. extracts the bearer token from `Authorization: Bearer <token>`,
  *  2. verifies it via {@link JwtService.verify} (stateless — zero DB round-trips
- *     on the hot path; eager `tokenVersion` validation is deferred to A5),
+ *     on the hot path),
  *  3. attaches the typed {@link AuthUser} principal to `req.user`.
+ *
+ * `tokenVersion` (`tv`) is validated LAZILY, NOT here (Phase A5 decision): the
+ * eager alternative — reading `users.tokenVersion` on every request to compare
+ * against the claim — was deliberately NOT taken, to keep this hot path free of a
+ * per-request DB read (§3.2; the guard runs on the high-frequency
+ * `GET /audits/:id` status poll). Mass-revocation instead flows through
+ * {@link import('./auth.service').AuthService.revokeAllSessions}: bumping `tv`
+ * propagates into the next access token on refresh, so a user's access ability
+ * lapses within at most one access-token TTL without touching this guard.
  *
  * Any defect — missing header, malformed header, invalid/expired/garbage token —
  * raises a single {@link UnauthorizedError} (→ 401 via AppErrorFilter), never

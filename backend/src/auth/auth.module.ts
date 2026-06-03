@@ -2,12 +2,14 @@ import { Module } from '@nestjs/common';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtService } from './jwt.service';
+import { LoginThrottleService } from './login-throttle.service';
 import { PasswordService } from './password.service';
 
 /**
- * Authentication module (Phase A1). Hosts the register/login surface and the
+ * Authentication module (Phase A1 + A6). Hosts the register/login surface and the
  * services behind it: {@link AuthService} (identity + issuance), {@link JwtService}
- * (HS256 access tokens), {@link PasswordService} (argon2id hashing).
+ * (HS256 access tokens), {@link PasswordService} (argon2id hashing), and
+ * {@link LoginThrottleService} (A6 per-email brute-force lockout).
  *
  * Wiring:
  *  - No `imports` for DB/config — DbModule and ConfigModule are `@Global`, so the
@@ -21,7 +23,7 @@ import { PasswordService } from './password.service';
  */
 @Module({
   controllers: [AuthController],
-  providers: [AuthService, JwtService, PasswordService],
-  exports: [AuthService, JwtService, PasswordService],
+  providers: [AuthService, JwtService, PasswordService, LoginThrottleService],
+  exports: [AuthService, JwtService, PasswordService, LoginThrottleService],
 })
 export class AuthModule {}

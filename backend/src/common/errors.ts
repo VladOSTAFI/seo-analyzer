@@ -40,3 +40,10 @@ export class InvalidCredentialsError extends AppError {}
 
 /** Registration was attempted with an already-registered email. Maps to HTTP 409. */
 export class EmailTakenError extends AppError {}
+
+/**
+ * Rate limit / brute-force lockout tripped (too many recent failed logins for the
+ * targeted email — Phase A6). Deliberately generic — the message never reveals
+ * whether the email exists (§8). Maps to HTTP 429 in AppErrorFilter.
+ */
+export class TooManyRequestsError extends AppError {}

@@ -11,6 +11,7 @@ import {
   ForbiddenError,
   InvalidArgumentError,
   InvalidCredentialsError,
+  TooManyRequestsError,
   UnauthorizedError,
 } from '../common/errors';
 
@@ -33,6 +34,7 @@ interface HttpResponseLike {
  *  - UnauthorizedError / InvalidCredentialsError → 401 Unauthorized (Phase A1)
  *  - ForbiddenError                             → 403 Forbidden     (Phase A1)
  *  - EmailTakenError                            → 409 Conflict      (Phase A1)
+ *  - TooManyRequestsError                       → 429 Too Many Requests (Phase A6)
  *  - any other AppError                         → 500 Internal Server Error
  *
  * It only catches AppError (`@Catch(AppError)`), so HttpExceptions the controller
@@ -71,5 +73,6 @@ function statusFor(exception: AppError): number {
   if (exception instanceof InvalidCredentialsError) return HttpStatus.UNAUTHORIZED;
   if (exception instanceof ForbiddenError) return HttpStatus.FORBIDDEN;
   if (exception instanceof EmailTakenError) return HttpStatus.CONFLICT;
+  if (exception instanceof TooManyRequestsError) return HttpStatus.TOO_MANY_REQUESTS;
   return HttpStatus.INTERNAL_SERVER_ERROR;
 }

@@ -1,9 +1,9 @@
 import { z } from 'zod';
 
 /**
- * Zod request schemas for the auth routes (Phase A1). Single-sourced here so the
- * controller's {@link import('../api/zod-validation.pipe').ZodValidationPipe}
- * and any tests validate against identical contracts. Both are `.strict()` so an
+ * Zod request schemas for the auth routes (Phase A1 + A5). Single-sourced here so
+ * the controller's {@link import('../api/zod-validation.pipe').ZodValidationPipe}
+ * and any tests validate against identical contracts. All are `.strict()` so an
  * unexpected field (e.g. a sneaked-in `role`) is rejected with 400 rather than
  * silently ignored — registration must never let a caller pick their own role.
  *
@@ -44,3 +44,20 @@ export const LoginBody = z
   })
   .strict();
 export type LoginBody = z.infer<typeof LoginBody>;
+
+/**
+ * `POST /auth/refresh` body (Phase A5). Carries the opaque refresh token the
+ * caller received at issuance; `.strict()` rejects any extra field. The token is
+ * an opaque random string, so the only DTO-level guarantee is presence (min 1) —
+ * validity (matches a stored hash, not expired/revoked) is decided by
+ * {@link import('./auth.service').AuthService.refresh} with one generic
+ * {@link import('../common/errors').UnauthorizedError} (§8, no enumeration).
+ */
+export const RefreshBody = z
+  .object({
+    refreshToken: z
+      .string({ required_error: 'refreshToken is required' })
+      .min(1, 'refreshToken is required'),
+  })
+  .strict();
+export type RefreshBody = z.infer<typeof RefreshBody>;
