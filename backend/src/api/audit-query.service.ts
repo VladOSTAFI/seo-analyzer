@@ -1,5 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { sql } from 'drizzle-orm';
+import { sql, type SQL } from 'drizzle-orm';
+import type { AuthUser } from '../auth/auth.types';
 import { DB, type Database } from '../db/db.types';
 import type {
   AuditDetailDto,
@@ -20,32 +21,58 @@ import type {
  * Postgres. `getAudit`'s severity rollup and the list `total`s are computed with
  * set-based SQL (GROUP BY / COUNT), never by materializing rows in Node.
  *
- * Returns plain JSON-safe DTOs ({@link AuditDto} etc., with ISO date strings).
- * A missing audit is signalled by a `null`/`undefined` return so the controller
- * owns HTTP status mapping (404), not this layer.
+ * OWNERSHIP SCOPING (Phase A3): `listAudits`/`getAudit`/`auditExists` take the
+ * authenticated principal and filter `WHERE owner_id = $user.id` — an `admin`
+ * skips the predicate (sees all). This is DATA-scoping of the list/detail/
+ * existence reads; the per-:id ownership *guard* (404-not-403 enforcement) is
+ * Phase A4. Child finding queries are already scoped by `auditId`, so once audit
+ * access is established (the controller checks `auditExists` first) no extra
+ * child filtering is required — hence `listFindings` keeps its A3 signature.
  *
- * CONTRACT FROZEN IN WAVE 1 — Wave 2A implements the bodies; the signatures here
- * are what AuditsController (Wave 2B) is written against. Do not change shapes.
+ * Returns plain JSON-safe DTOs ({@link AuditDto} etc., with ISO date strings).
+ * A missing-or-not-visible audit is signalled by a `null`/`undefined` return so
+ * the controller owns HTTP status mapping (404), not this layer.
  */
 @Injectable()
 export class AuditQueryService {
   constructor(@Inject(DB) private readonly db: Database) {}
 
-  /** List audits newest-first, offset-paginated, with the unpaged total. */
-  async listAudits(page: PageParams): Promise<Paginated<AuditDto>> {
+  /**
+   * The owner-scope SQL fragment for a given principal (Phase A3). A `user` is
+   * restricted to `owner_id = <their id>`; an `admin` gets `true` (no
+   * restriction). Returned as a bound `sql` fragment so it can be AND-ed into any
+   * WHERE clause injection-safely (the id is a bound parameter, never
+   * concatenated). Owner-less rows (`owner_id IS NULL`) do NOT match the `=`
+   * predicate, so only admins see pre-migration audits.
+   */
+  private ownerScope(user: AuthUser): SQL {
+    return user.role === 'admin' ? sql`true` : sql`owner_id = ${user.id}`;
+  }
+
+  /**
+   * List audits newest-first, offset-paginated, with the unpaged total. Scoped
+   * to `user` (Phase A3): a `user` sees only their own audits, an `admin` all.
+   */
+  async listAudits(page: PageParams, user: AuthUser): Promise<Paginated<AuditDto>> {
+    const scope = this.ownerScope(user);
+
     // Two set-based queries: one materializes exactly the requested page
-    // (LIMIT/OFFSET, newest-first), the other COUNTs the whole table. We never
+    // (LIMIT/OFFSET, newest-first), the other COUNTs the scoped set. Both share
+    // the SAME owner-scope WHERE so `total` matches the visible rows. We never
     // fetch all rows to derive `total` — that's a separate COUNT(*) below.
     const pageResult = await this.db.execute(sql`
       select id, start_url, status, failed_stage, report_path, created_at, updated_at
       from audits
+      where ${scope}
       order by created_at desc
       limit ${page.limit} offset ${page.offset}
     `);
 
     // COUNT(*) comes back as a bigint → the pg driver hands it to us as a string,
-    // hence the Number(...) coercion.
-    const countResult = await this.db.execute(sql`select count(*)::text as total from audits`);
+    // hence the Number(...) coercion. Same scope so the total is owner-consistent.
+    const countResult = await this.db.execute(
+      sql`select count(*)::text as total from audits where ${scope}`,
+    );
     const total = Number(countResult.rows[0]?.total ?? 0);
 
     const items = pageResult.rows.map((row): AuditDto => this.toAuditDto(row));
@@ -55,13 +82,18 @@ export class AuditQueryService {
 
   /**
    * Fetch one audit plus its finding rollups (total + zero-filled bySeverity),
-   * or `undefined` if no audit has that id.
+   * or `undefined` if no audit has that id OR it is not visible to `user`
+   * (Phase A3 owner-scoping; admin sees all). The not-visible and missing cases
+   * are indistinguishable on purpose so the controller maps both to 404 without
+   * leaking existence (AUTHORIZATION_PLAN §8).
    */
-  async getAudit(id: string): Promise<AuditDetailDto | undefined> {
+  async getAudit(id: string, user: AuthUser): Promise<AuditDetailDto | undefined> {
+    const scope = this.ownerScope(user);
+
     const auditResult = await this.db.execute(sql`
       select id, start_url, status, failed_stage, report_path, created_at, updated_at
       from audits
-      where id = ${id}
+      where id = ${id} and ${scope}
       limit 1
     `);
 
@@ -71,7 +103,8 @@ export class AuditQueryService {
     // Single GROUP BY over this audit's findings: Postgres returns at most one
     // row per severity that actually occurs. We then zero-fill all five enum
     // severities so every SeverityCounts key is present even when a severity has
-    // no findings (the GROUP BY simply omits absent severities).
+    // no findings (the GROUP BY simply omits absent severities). No owner
+    // predicate needed here — access to the parent audit is already established.
     const bySeverityResult = await this.db.execute(sql`
       select severity, count(*)::text as count
       from findings
@@ -91,18 +124,29 @@ export class AuditQueryService {
     return { ...this.toAuditDto(auditRow), findingsTotal, bySeverity };
   }
 
-  /** Whether an audit with this id exists (cheap existence check for the controller). */
-  async auditExists(id: string): Promise<boolean> {
+  /**
+   * Whether an audit with this id exists AND is visible to `user` (cheap
+   * existence check for the controller; Phase A3 owner-scoped, admin bypasses).
+   * Returns `false` for a missing id or one owned by someone else alike, so the
+   * controller's 404 doesn't leak existence (§8).
+   */
+  async auditExists(id: string, user: AuthUser): Promise<boolean> {
+    const scope = this.ownerScope(user);
     // `select 1 ... limit 1` short-circuits in Postgres: it stops at the first
     // matching row, so existence is O(index-lookup), not a scan/count.
-    const result = await this.db.execute(sql`select 1 from audits where id = ${id} limit 1`);
+    const result = await this.db.execute(
+      sql`select 1 from audits where id = ${id} and ${scope} limit 1`,
+    );
     return result.rows.length > 0;
   }
 
   /**
    * List an audit's findings, filtered by optional severity/ruleId, offset-
-   * paginated, with the filtered total. Caller checks {@link auditExists} first
-   * to distinguish "no audit" (404) from "audit with zero findings" (empty page).
+   * paginated, with the filtered total. The CALLER establishes audit visibility
+   * first via {@link auditExists} (owner-scoped, A3) — so findings are reached
+   * only for an audit the principal may see, and the child query needs no extra
+   * owner predicate (it is already scoped by `auditId`). That same check also
+   * distinguishes "no audit" (404) from "audit with zero findings" (empty page).
    */
   async listFindings(auditId: string, query: FindingsQuery): Promise<Paginated<FindingDto>> {
     // The filter predicate is built once from `sql` fragments so the page query

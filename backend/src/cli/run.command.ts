@@ -13,6 +13,9 @@ import { parseStartUrl } from './create.command';
  *
  * Reuses {@link parseStartUrl} from the create command so the URL contract is
  * single-sourced with `audit:create`.
+ *
+ * Runs UNAUTHENTICATED — there is no principal in the CLI, so it passes
+ * `ownerId = null` (Phase A3; the column is nullable for exactly this reason).
  */
 @Command({
   name: 'audit:run',
@@ -30,7 +33,7 @@ export class RunCommand extends CommandRunner {
     void _options;
     const url = parseStartUrl(passedParams[0]);
 
-    const result = await this.audit.createAndRun(url);
+    const result = await this.audit.createAndRun(url, null);
 
     const line =
       `audit ${result.auditId} ${result.status} — ` +

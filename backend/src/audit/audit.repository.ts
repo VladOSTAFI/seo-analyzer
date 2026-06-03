@@ -1,6 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { InvalidArgumentError } from '../common/errors';
+import type { AuthUser } from '../auth/auth.types';
 import { DB, type Database } from '../db/db.types';
 import { type Audit, audits, auditStatus } from '../db/schema';
 
@@ -20,6 +21,52 @@ export class AuditRepository {
   async findById(id: string): Promise<Audit | undefined> {
     const [row] = await this.db.select().from(audits).where(eq(audits.id, id)).limit(1);
     return row;
+  }
+
+  /**
+   * Ownership-aware lookup (Phase A3 — building block for A4's guard). Fetch one
+   * audit by id ONLY if `user` may see it: an `admin` bypasses the predicate
+   * (sees any audit), otherwise the row must be owned by `user.id`
+   * (`eq(audits.ownerId, user.id)`).
+   *
+   * Returns `undefined` both when the id doesn't exist AND when it exists but is
+   * owned by someone else — the two are indistinguishable on purpose so A4 can
+   * map "not visible" to a **404 (not 403)** and avoid leaking which ids exist
+   * (AUTHORIZATION_PLAN §8). It deliberately does NOT throw `ForbiddenError` for
+   * the cross-user case for that same reason.
+   *
+   * NOTE: owner-less rows (`ownerId IS NULL`, pre-migration audits) are NOT
+   * matched by the `=` predicate, so a non-admin user cannot see them — only an
+   * admin can, which is the intended migration-window behavior.
+   */
+  async findByIdForUser(id: string, user: AuthUser): Promise<Audit | undefined> {
+    const predicate =
+      user.role === 'admin'
+        ? eq(audits.id, id)
+        : and(eq(audits.id, id), eq(audits.ownerId, user.id));
+    const [row] = await this.db.select().from(audits).where(predicate).limit(1);
+    return row;
+  }
+
+  /**
+   * Ownership assertion (Phase A3 — building block for A4's guard). Returns the
+   * audit if `user` may see it (admin: any; otherwise owner-only), or throws
+   * {@link InvalidArgumentError} when it is missing-or-not-visible.
+   *
+   * Per AUTHORIZATION_PLAN §8 the cross-user case must be indistinguishable from
+   * a missing id (so existence isn't leaked): both paths funnel through the same
+   * not-found error here rather than a `ForbiddenError`. A4's guard layers the
+   * actual `404` HTTP response on top of this.
+   */
+  async assertOwnedBy(id: string, user: AuthUser): Promise<Audit> {
+    const audit = await this.findByIdForUser(id, user);
+    if (!audit) {
+      throw new InvalidArgumentError(
+        `No audit found with id "${id}". Create one first with ` +
+          `\`audit:create <url>\`, then pass the printed id.`,
+      );
+    }
+    return audit;
   }
 
   /**

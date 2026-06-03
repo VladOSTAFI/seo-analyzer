@@ -54,30 +54,39 @@ export class AuditService {
   ) {}
 
   /**
-   * Validate `url`, insert a fresh `audits` row (status defaults to `created`),
-   * log the new id, then run the full pipeline against it. This is what
-   * `audit:run <url>` calls — a cold start from URL to finished `.xlsx`.
+   * Validate `url`, insert a fresh `audits` row (status defaults to `created`)
+   * owned by `ownerId`, log the new id, then run the full pipeline against it.
+   * This is what `audit:run <url>` calls — a cold start from URL to finished
+   * `.xlsx`.
+   *
+   * `ownerId` (Phase A3) stamps the creator on the row: the HTTP layer passes
+   * `req.user.id`; the unauthenticated CLI passes `null` (the column is nullable
+   * for that migration window — see AUTHORIZATION_PLAN §5/§10).
    *
    * URL validation reuses {@link parseStartUrl} so the run command shares the
    * same http(s) contract as `audit:create`. An invalid URL rejects here, BEFORE
    * any row is inserted or any stage runs.
    */
-  async createAndRun(url: string): Promise<RunResult> {
-    const auditId = await this.create(url);
+  async createAndRun(url: string, ownerId: string | null): Promise<RunResult> {
+    const auditId = await this.create(url, ownerId);
     return this.runAll(auditId);
   }
 
   /**
-   * Validate `url`, insert a fresh `audits` row (status `created`), and return
-   * its id WITHOUT running the pipeline. The REST layer (Phase 7) uses this to
-   * acknowledge a `POST /audits` synchronously (returning the id) and then drive
-   * the pipeline in the background via {@link runInBackground}. URL validation
-   * reuses {@link parseStartUrl}, so an invalid URL rejects here BEFORE any row
-   * is inserted — the controller maps that to HTTP 400.
+   * Validate `url`, insert a fresh `audits` row (status `created`) owned by
+   * `ownerId`, and return its id WITHOUT running the pipeline. The REST layer
+   * (Phase 7) uses this to acknowledge a `POST /audits` synchronously (returning
+   * the id) and then drive the pipeline in the background via
+   * {@link runInBackground}.
+   *
+   * `ownerId` (Phase A3) is the creating principal: `req.user.id` from the HTTP
+   * caller, or `null` from the unauthenticated CLI. URL validation reuses
+   * {@link parseStartUrl}, so an invalid URL rejects here BEFORE any row is
+   * inserted — the controller maps that to HTTP 400.
    */
-  async create(url: string): Promise<string> {
+  async create(url: string, ownerId: string | null): Promise<string> {
     const startUrl = parseStartUrl(url);
-    const auditId = await this.createAudit(startUrl);
+    const auditId = await this.createAudit(startUrl, ownerId);
     this.logger.log(`Created audit ${auditId} for ${startUrl}`);
     return auditId;
   }
@@ -86,6 +95,11 @@ export class AuditService {
    * Fire-and-forget the full pipeline for an already-created audit. Intended for
    * the REST layer: the HTTP request returns immediately while the audit runs
    * out-of-band, and clients poll `GET /audits/:id` for status.
+   *
+   * Takes an EXISTING `auditId` (already stamped with its owner by {@link create})
+   * — ownership is established at insert time, so the background run is purely an
+   * id-driven pipeline and never touches authz (per AUTHORIZATION_PLAN §8: all
+   * authz runs in the request lifecycle BEFORE this is invoked).
    *
    * This NEVER rejects: {@link runAll}'s per-stage wrapper already marks the
    * audit `failed` on any error, so here we only log the failure to avoid an
@@ -103,14 +117,15 @@ export class AuditService {
   }
 
   /**
-   * Insert a new audit row and return its id. Isolated as a tiny seam so the
-   * Drizzle insert chain can be stubbed in unit tests without mocking the whole
-   * pipeline. Mirrors the exact idiom in {@link import('../cli/create.command').CreateCommand}.
+   * Insert a new audit row owned by `ownerId` and return its id. Isolated as a
+   * tiny seam so the Drizzle insert chain can be stubbed in unit tests without
+   * mocking the whole pipeline. Mirrors the exact idiom in
+   * {@link import('../cli/create.command').CreateCommand}.
    */
-  private async createAudit(startUrl: string): Promise<string> {
+  private async createAudit(startUrl: string, ownerId: string | null): Promise<string> {
     const [row] = await this.db
       .insert(audits)
-      .values(buildAuditPayload(startUrl))
+      .values(buildAuditPayload(startUrl, ownerId))
       .returning({ id: audits.id });
     if (!row) {
       throw new Error('Insert returned no row; audit was not created.');

@@ -43,6 +43,8 @@ const REPORT = {
 };
 
 const AUDIT_ID = '11111111-2222-3333-4444-555555555555';
+/** A creating principal's id (Phase A3: threaded into the audits insert). */
+const OWNER_ID = '99999999-8888-7777-6666-555555555555';
 
 /**
  * Build an AuditService with fully mocked collaborators plus a shared `order`
@@ -187,23 +189,57 @@ describe('AuditService.runAll', () => {
   });
 });
 
+describe('AuditService.create', () => {
+  it('threads ownerId into the audits insert payload (Phase A3) and returns the new id', async () => {
+    const { service, insert, values } = buildService();
+
+    const id = await service.create('https://example.com', OWNER_ID);
+
+    expect(id).toBe(AUDIT_ID);
+    expect(insert).toHaveBeenCalledTimes(1);
+    // The insert carries BOTH the normalized URL and the owning principal.
+    expect(values).toHaveBeenCalledWith({ startUrl: 'https://example.com/', ownerId: OWNER_ID });
+  });
+
+  it('passes a null ownerId straight through (the unauthenticated CLI path)', async () => {
+    const { service, insert, values } = buildService();
+
+    const id = await service.create('https://example.com', null);
+
+    expect(id).toBe(AUDIT_ID);
+    expect(insert).toHaveBeenCalledTimes(1);
+    expect(values).toHaveBeenCalledWith({ startUrl: 'https://example.com/', ownerId: null });
+  });
+
+  it('rejects an invalid URL before inserting a row', async () => {
+    const { service, insert } = buildService();
+
+    await expect(service.create('not-a-url', OWNER_ID)).rejects.toBeInstanceOf(
+      InvalidArgumentError,
+    );
+    expect(insert).not.toHaveBeenCalled();
+  });
+});
+
 describe('AuditService.createAndRun', () => {
   it('rejects an invalid URL before inserting a row or running any stage', async () => {
     const { service, insert, crawl } = buildService();
 
-    await expect(service.createAndRun('not-a-url')).rejects.toBeInstanceOf(InvalidArgumentError);
+    await expect(service.createAndRun('not-a-url', OWNER_ID)).rejects.toBeInstanceOf(
+      InvalidArgumentError,
+    );
     expect(insert).not.toHaveBeenCalled();
     expect(crawl.crawl).not.toHaveBeenCalled();
   });
 
-  it('inserts a new audit for a valid URL then runs the pipeline against the new id', async () => {
+  it('inserts a new owned audit for a valid URL then runs the pipeline against the new id', async () => {
     const { service, insert, values, crawl, report, auditRepo } = buildService();
 
-    const result = await service.createAndRun('https://example.com');
+    const result = await service.createAndRun('https://example.com', OWNER_ID);
 
-    // Inserted with the normalized start URL payload.
+    // Inserted with the normalized start URL payload AND the owner (Phase A3).
     expect(insert).toHaveBeenCalledTimes(1);
-    expect(values).toHaveBeenCalledWith({ startUrl: 'https://example.com/' });
+    expect(values).toHaveBeenCalledWith({ startUrl: 'https://example.com/', ownerId: OWNER_ID });
 
     // Drove the pipeline against the inserted id.
     expect(crawl.crawl).toHaveBeenCalledWith(AUDIT_ID);
@@ -213,5 +249,43 @@ describe('AuditService.createAndRun', () => {
     expect(result.auditId).toBe(AUDIT_ID);
     expect(result.status).toBe('done');
     expect(result.reportPath).toBe(REPORT.reportPath);
+  });
+
+  it('threads a null ownerId (CLI cold-start) through to the insert', async () => {
+    const { service, values } = buildService();
+
+    await service.createAndRun('https://example.com', null);
+
+    expect(values).toHaveBeenCalledWith({ startUrl: 'https://example.com/', ownerId: null });
+  });
+});
+
+describe('AuditService.runInBackground (fire-and-forget contract)', () => {
+  it('resolves (never rejects) when the pipeline succeeds', async () => {
+    const { service, report } = buildService();
+
+    await expect(service.runInBackground(AUDIT_ID)).resolves.toBeUndefined();
+    expect(report.generate).toHaveBeenCalledWith(AUDIT_ID);
+  });
+
+  it('SWALLOWS a stage failure: resolves undefined instead of rejecting', async () => {
+    const { service, analyze, auditRepo } = buildService();
+    (analyze.analyze as jest.Mock).mockRejectedValue(new Error('analyze blew up'));
+
+    // The whole point of the background contract: the un-awaited promise must
+    // settle to undefined (logged internally) so it can never crash the process.
+    await expect(service.runInBackground(AUDIT_ID)).resolves.toBeUndefined();
+    // The failure was still recorded on the audit by runAll's per-stage wrapper.
+    expect(auditRepo.markFailed).toHaveBeenCalledWith(AUDIT_ID, 'analyze');
+  });
+
+  it('SWALLOWS an assertExists failure (bad id) without rejecting', async () => {
+    const { service, auditRepo, crawl } = buildService();
+    (auditRepo.assertExists as jest.Mock).mockRejectedValue(
+      new InvalidArgumentError('No audit found'),
+    );
+
+    await expect(service.runInBackground(AUDIT_ID)).resolves.toBeUndefined();
+    expect(crawl.crawl).not.toHaveBeenCalled();
   });
 });

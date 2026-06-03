@@ -5,6 +5,7 @@ import {
   getDb,
   seedFindings,
 } from '../../test/int/rule-harness';
+import type { AuthUser } from '../auth/auth.types';
 import type { Database } from '../db/db.types';
 import { AuditQueryService } from './audit-query.service';
 import { DEFAULT_LIMIT } from './api.types';
@@ -17,6 +18,16 @@ import { DEFAULT_LIMIT } from './api.types';
  * down in `afterEach`, so concurrent runs on the shared DB never collide.
  */
 describe('AuditQueryService (int)', () => {
+  // Phase A3: the scoped reads take a principal. We use an ADMIN here so the
+  // harness's owner-less audits stay visible and the pre-A3 assertions hold;
+  // the unit spec (audit-query.service.spec.ts) pins the non-admin owner predicate.
+  const ADMIN: AuthUser = {
+    id: '00000000-0000-0000-0000-0000000000ad',
+    email: 'admin@example.com',
+    role: 'admin',
+    tokenVersion: 0,
+  };
+
   let service: AuditQueryService;
   let auditId: string;
 
@@ -45,7 +56,7 @@ describe('AuditQueryService (int)', () => {
       const c = await createAudit('https://c.test');
 
       try {
-        const firstPage = await service.listAudits({ limit: 2, offset: 0 });
+        const firstPage = await service.listAudits({ limit: 2, offset: 0 }, ADMIN);
 
         expect(firstPage.limit).toBe(2);
         expect(firstPage.offset).toBe(0);
@@ -66,7 +77,7 @@ describe('AuditQueryService (int)', () => {
         expect(top.startUrl).toBe('https://c.test');
 
         // Offset advances the window: page 2 starts at the third-newest.
-        const secondPage = await service.listAudits({ limit: 2, offset: 2 });
+        const secondPage = await service.listAudits({ limit: 2, offset: 2 }, ADMIN);
         expect(secondPage.offset).toBe(2);
         expect(secondPage.items.map((i) => i.id)).toContain(a);
         expect(secondPage.total).toBe(firstPage.total);
@@ -80,7 +91,7 @@ describe('AuditQueryService (int)', () => {
 
   describe('getAudit', () => {
     it('returns undefined for an id that does not exist', async () => {
-      const result = await service.getAudit('00000000-0000-0000-0000-000000000000');
+      const result = await service.getAudit('00000000-0000-0000-0000-000000000000', ADMIN);
       expect(result).toBeUndefined();
     });
 
@@ -92,7 +103,7 @@ describe('AuditQueryService (int)', () => {
         { ruleId: 'r.low', severity: 'low', url: null },
       ]);
 
-      const result = await service.getAudit(auditId);
+      const result = await service.getAudit(auditId, ADMIN);
 
       expect(result).toBeDefined();
       expect(result?.id).toBe(auditId);
@@ -108,7 +119,7 @@ describe('AuditQueryService (int)', () => {
     });
 
     it('returns an all-zero rollup for an audit with no findings', async () => {
-      const result = await service.getAudit(auditId);
+      const result = await service.getAudit(auditId, ADMIN);
 
       expect(result?.findingsTotal).toBe(0);
       expect(result?.bySeverity).toEqual({
@@ -123,10 +134,10 @@ describe('AuditQueryService (int)', () => {
 
   describe('auditExists', () => {
     it('is true for a seeded audit and false for a random uuid', async () => {
-      await expect(service.auditExists(auditId)).resolves.toBe(true);
-      await expect(service.auditExists('11111111-1111-1111-1111-111111111111')).resolves.toBe(
-        false,
-      );
+      await expect(service.auditExists(auditId, ADMIN)).resolves.toBe(true);
+      await expect(
+        service.auditExists('11111111-1111-1111-1111-111111111111', ADMIN),
+      ).resolves.toBe(false);
     });
   });
 

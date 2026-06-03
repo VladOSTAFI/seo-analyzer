@@ -43,6 +43,13 @@
       "when": 1780484380172,
       "tag": "0005_magical_vapor",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1780485092636,
+      "tag": "0006_awesome_tattoo",
+      "breakpoints": true
     }
   ]
 }

@@ -29,12 +29,17 @@ describe('parseStartUrl', () => {
 });
 
 describe('buildAuditPayload', () => {
-  it('produces an insert payload with the start URL and no overridden defaults', () => {
-    const payload = buildAuditPayload('https://example.com/');
-    expect(payload).toEqual({ startUrl: 'https://example.com/' });
+  it('produces an insert payload with the start URL and the owning principal (Phase A3)', () => {
+    const payload = buildAuditPayload('https://example.com/', 'owner-1');
+    expect(payload).toEqual({ startUrl: 'https://example.com/', ownerId: 'owner-1' });
     // status/id/timestamps are DB defaults — must NOT be set on the payload.
     expect(payload).not.toHaveProperty('status');
     expect(payload).not.toHaveProperty('id');
+  });
+
+  it('carries a null ownerId for the unauthenticated CLI path', () => {
+    const payload = buildAuditPayload('https://example.com/', null);
+    expect(payload).toEqual({ startUrl: 'https://example.com/', ownerId: null });
   });
 });
 
@@ -47,7 +52,7 @@ describe('CreateCommand.run', () => {
     return { db, insert, values, returning };
   }
 
-  it('inserts an audit and prints the returned UUID to stdout', async () => {
+  it('inserts an owner-less audit (CLI is unauthenticated) and prints the returned UUID', async () => {
     const id = '11111111-2222-3333-4444-555555555555';
     const { db, insert, values } = mockDb(id);
     const command = new CreateCommand(db);
@@ -57,7 +62,9 @@ describe('CreateCommand.run', () => {
     await command.run(['https://example.com'], {});
 
     expect(insert).toHaveBeenCalledWith(audits);
-    expect(values).toHaveBeenCalledWith({ startUrl: 'https://example.com/' });
+    // The CLI has no principal, so the new audit is owner-less (ownerId: null) —
+    // the column is nullable precisely to allow this (Phase A3 / §10).
+    expect(values).toHaveBeenCalledWith({ startUrl: 'https://example.com/', ownerId: null });
     expect(writeSpy).toHaveBeenCalledWith(`${id}\n`);
 
     writeSpy.mockRestore();

@@ -31,14 +31,21 @@ export function parseStartUrl(input: string | undefined): string {
   return parsed.toString();
 }
 
-/** Build the insert payload for a new audit row from a validated start URL. */
-export function buildAuditPayload(startUrl: string): NewAudit {
-  return { startUrl };
+/**
+ * Build the insert payload for a new audit row from a validated start URL and an
+ * owning user id (Phase A3). `ownerId` is NULLABLE on purpose: the CLI runs
+ * unauthenticated and passes `null` (audits created before the seeded admin
+ * exists), while the HTTP layer passes `req.user.id`. See AUTHORIZATION_PLAN §5/§10.
+ */
+export function buildAuditPayload(startUrl: string, ownerId: string | null): NewAudit {
+  return { startUrl, ownerId };
 }
 
 /**
  * Phase 0 CLI: `audit:create <url>`.
  * Inserts an audits row (status defaults to 'created') and prints the new UUID.
+ * Runs UNAUTHENTICATED — there is no principal here, so `ownerId` is `null`
+ * (the column is nullable precisely to allow this; A3 does not seed an admin).
  */
 @Command({
   name: 'audit:create',
@@ -57,7 +64,7 @@ export class CreateCommand extends CommandRunner {
     const startUrl = parseStartUrl(passedParams[0]);
     const [row] = await this.db
       .insert(audits)
-      .values(buildAuditPayload(startUrl))
+      .values(buildAuditPayload(startUrl, null))
       .returning({ id: audits.id });
 
     if (!row) {

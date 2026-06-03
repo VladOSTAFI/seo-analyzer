@@ -12,6 +12,8 @@ import {
   Query,
   StreamableFile,
 } from '@nestjs/common';
+import { CurrentUser } from '../auth/current-user.decorator';
+import type { AuthUser } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
 import { AuditQueryService } from './audit-query.service';
 import { CreateAuditBody, ListAuditsQuery, ListFindingsQuery } from './api.dto';
@@ -32,6 +34,14 @@ const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.s
  *   GET    /audits/:id          → detail + finding rollups (404 if missing)
  *   GET    /audits/:id/findings → findings (filters + pagination; 404 if no audit)
  *   GET    /audits/:id/report   → stream the .xlsx (StreamableFile)
+ *
+ * OWNERSHIP (Phase A3): every route reads the authenticated principal via
+ * {@link CurrentUser} (attached by the global JwtAuthGuard, A2). `POST` stamps
+ * the new audit's `ownerId = user.id`; the read routes forward the principal so
+ * the query layer scopes results to the owner (admins see all). NOTE: A3 only
+ * wires the ownership DATA + list/detail scoping. The per-:id ownership *guard*
+ * (the 404-not-403 enforcement on `:id`/`findings`/`report`) is Phase A4 and is
+ * NOT built here — see AUTHORIZATION_PLAN §4 decision matrix.
  *
  * ASYNC-PIPELINE-VIA-202: a full audit (crawl→…→report) is far too long to run
  * inside a request. So `POST /audits` only validates the URL + inserts the row
@@ -60,31 +70,44 @@ export class AuditsController {
    * the pipeline is fire-and-forget — we deliberately do NOT await
    * `runInBackground`, so the request returns at once. A malformed URL makes
    * `create()` throw InvalidArgumentError → the global filter maps it to 400.
+   *
+   * The new audit is stamped with `ownerId = user.id` (Phase A3): the creating
+   * principal owns the result.
    */
   @Post()
   @HttpCode(202)
   async create(
     @Body(new ZodValidationPipe(CreateAuditBody)) body: CreateAuditBody,
+    @CurrentUser() user: AuthUser,
   ): Promise<{ id: string; status: 'created' }> {
-    const id = await this.audits.create(body.url);
+    const id = await this.audits.create(body.url, user.id);
     // Fire-and-forget: must NOT be awaited — the request returns while the
     // pipeline runs out-of-band. `runInBackground` never rejects.
     void this.audits.runInBackground(id);
     return { id, status: 'created' };
   }
 
-  /** List audits, newest-first and offset-paginated. Always 200 (empty page if none). */
+  /**
+   * List audits, newest-first and offset-paginated. Always 200 (empty page if
+   * none). Scoped to the caller (Phase A3): a `user` sees only their own audits;
+   * an `admin` sees all.
+   */
   @Get()
   listAudits(
     @Query(new ZodValidationPipe(ListAuditsQuery)) query: ListAuditsQuery,
+    @CurrentUser() user: AuthUser,
   ): Promise<Paginated<AuditDto>> {
-    return this.query.listAudits(query);
+    return this.query.listAudits(query, user);
   }
 
-  /** One audit plus its finding rollups. 200 when found, 404 (NotFound) when missing. */
+  /**
+   * One audit plus its finding rollups. 200 when found, 404 (NotFound) when
+   * missing OR (Phase A3 scoping) not visible to the caller — a non-owner
+   * non-admin gets the same 404 as a missing id, so existence isn't leaked.
+   */
   @Get(':id')
-  async getAudit(@Param('id') id: string): Promise<AuditDetailDto> {
-    const audit = await this.query.getAudit(id);
+  async getAudit(@Param('id') id: string, @CurrentUser() user: AuthUser): Promise<AuditDetailDto> {
+    const audit = await this.query.getAudit(id, user);
     if (!audit) {
       throw new NotFoundException(`No audit found with id ${id}`);
     }
@@ -93,16 +116,17 @@ export class AuditsController {
 
   /**
    * List an audit's findings (optional severity/ruleId filters + pagination). We
-   * check {@link AuditQueryService.auditExists} FIRST so a missing audit is a
-   * clean 404, distinct from an existing audit with zero findings (→ 200 + empty
-   * page). 200 otherwise.
+   * check {@link AuditQueryService.auditExists} FIRST (owner-scoped, Phase A3) so
+   * a missing-or-not-visible audit is a clean 404, distinct from an existing
+   * audit with zero findings (→ 200 + empty page). 200 otherwise.
    */
   @Get(':id/findings')
   async listFindings(
     @Param('id') id: string,
     @Query(new ZodValidationPipe(ListFindingsQuery)) query: ListFindingsQuery,
+    @CurrentUser() user: AuthUser,
   ): Promise<Paginated<FindingDto>> {
-    if (!(await this.query.auditExists(id))) {
+    if (!(await this.query.auditExists(id, user))) {
       throw new NotFoundException(`No audit found with id ${id}`);
     }
     return this.query.listFindings(id, query);
@@ -110,7 +134,7 @@ export class AuditsController {
 
   /**
    * Stream the audit's `.xlsx` report as an attachment. Status contract:
-   *  - audit missing                → 404 NotFound
+   *  - audit missing or not visible → 404 NotFound (owner-scoped, Phase A3)
    *  - audit exists, no reportPath  → 409 Conflict (pipeline hasn't produced it yet)
    *  - reportPath set but file gone → 404 NotFound (recorded path no longer on disk)
    *  - otherwise                    → 200 with the streamed workbook
@@ -119,8 +143,8 @@ export class AuditsController {
    * from the options here — no `@Res`, keeping the handler framework-agnostic.
    */
   @Get(':id/report')
-  async getReport(@Param('id') id: string): Promise<StreamableFile> {
-    const audit = await this.query.getAudit(id);
+  async getReport(@Param('id') id: string, @CurrentUser() user: AuthUser): Promise<StreamableFile> {
+    const audit = await this.query.getAudit(id, user);
     if (!audit) {
       throw new NotFoundException(`No audit found with id ${id}`);
     }
