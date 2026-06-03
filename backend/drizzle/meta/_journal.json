@@ -36,6 +36,13 @@
       "when": 1780483597494,
       "tag": "0004_handy_grim_reaper",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1780484380172,
+      "tag": "0005_magical_vapor",
+      "breakpoints": true
     }
   ]
 }

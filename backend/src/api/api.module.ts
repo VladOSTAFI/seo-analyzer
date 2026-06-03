@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { APP_FILTER } from '@nestjs/core';
+import { AuthModule } from '../auth/auth.module';
 import { RunModule } from '../run/run.module';
 import { AuditsController } from './audits.controller';
 import { AuditQueryService } from './audit-query.service';
@@ -12,6 +13,8 @@ import { AppErrorFilter } from './app-error.filter';
  * Wiring:
  *  - imports RunModule → provides {@link import('../audit/audit.service').AuditService}
  *    (which RunModule exports) for the write path (`POST /audits` create + run).
+ *  - imports AuthModule (Phase A1) → mounts the `/auth/*` routes (register/login)
+ *    and exposes JwtService/AuthService for the upcoming guard (A2).
  *  - AuditQueryService injects the global DB token directly (DbModule is @Global),
  *    so no DB import is needed here.
  *
@@ -21,7 +24,7 @@ import { AppErrorFilter } from './app-error.filter';
  * come alive under the `api` entrypoint (src/api.main.ts) via NestFactory.create.
  */
 @Module({
-  imports: [RunModule],
+  imports: [RunModule, AuthModule],
   controllers: [AuditsController],
   providers: [AuditQueryService, { provide: APP_FILTER, useClass: AppErrorFilter }],
   exports: [AuditQueryService],
