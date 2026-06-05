@@ -1,0 +1,179 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" fill="none" role="img" aria-label="Excel report — categorized fix tables ranked by severity">
+  <defs>
+    <linearGradient id="sd-logo-grad" x1="4" y1="4" x2="28" y2="28" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#D8B4FE"/>
+      <stop offset="0.55" stop-color="#A855F7"/>
+      <stop offset="1" stop-color="#7C3AED"/>
+    </linearGradient>
+    <style>
+      text { font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; }
+      .mono { font-variant-numeric: tabular-nums; }
+    </style>
+  </defs>
+
+  <!-- Canvas -->
+  <rect width="1280" height="720" fill="#0B0C12"/>
+
+  <!-- ── Title bar ─────────────────────────────────────────── -->
+  <rect width="1280" height="62" fill="#101119"/>
+  <line x1="0" y1="62" x2="1280" y2="62" stroke="#23252F" stroke-width="1"/>
+
+  <!-- Brand lens mark -->
+  <g transform="translate(28 20) scale(0.7)">
+    <circle cx="14" cy="14" r="8.5" stroke="url(#sd-logo-grad)" stroke-width="2.6"/>
+    <path d="M20.4 20.4 26.4 26.4" stroke="url(#sd-logo-grad)" stroke-width="2.8" stroke-linecap="round"/>
+    <path d="M9.8 16.6 12.8 13.2 15.4 15.2 18.4 10.8" stroke="url(#sd-logo-grad)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="18.4" cy="10.8" r="1.6" fill="url(#sd-logo-grad)"/>
+  </g>
+  <text x="64" y="33" fill="#FAFAFA" font-size="17" font-weight="600" letter-spacing="-0.2">SEO Audit — Fix Specification</text>
+  <text x="64" y="50" fill="#9A9DAC" font-size="12">audit-fix-spec.xlsx · 33 checks</text>
+
+  <!-- Severity tally -->
+  <g class="mono" font-size="12" fill="#9A9DAC">
+    <circle cx="826"  cy="31" r="4" fill="#E14747"/><text x="838"  y="35">1 Critical</text>
+    <circle cx="912"  cy="31" r="4" fill="#F47A34"/><text x="924"  y="35">4 High</text>
+    <circle cx="998"  cy="31" r="4" fill="#F6BB28"/><text x="1010" y="35">2 Medium</text>
+    <circle cx="1084" cy="31" r="4" fill="#35B0E9"/><text x="1096" y="35">1 Low</text>
+    <circle cx="1170" cy="31" r="4" fill="#995AF2"/><text x="1182" y="35">1 Info</text>
+  </g>
+
+  <!-- Row-number gutter -->
+  <rect x="0" y="62" width="52" height="600" fill="#101119"/>
+
+  <!-- ── Column header ─────────────────────────────────────── -->
+  <rect x="0" y="62" width="1280" height="42" fill="#15161E"/>
+  <line x1="0" y1="104" x2="1280" y2="104" stroke="#23252F" stroke-width="1"/>
+  <g fill="#9A9DAC" font-size="11" font-weight="600" letter-spacing="1">
+    <text x="26" y="89" text-anchor="middle">#</text>
+    <text x="70" y="89">ISSUE</text>
+    <text x="468" y="89">CATEGORY</text>
+    <text x="672" y="89">SEVERITY</text>
+    <text x="905" y="89">AFFECTED PAGES</text>
+  </g>
+
+  <!-- Subtle vertical separators -->
+  <g stroke="#181922" stroke-width="1">
+    <line x1="52"  y1="62" x2="52"  y2="662"/>
+    <line x1="430" y1="62" x2="430" y2="662"/>
+    <line x1="650" y1="62" x2="650" y2="662"/>
+    <line x1="825" y1="62" x2="825" y2="662"/>
+  </g>
+
+  <!-- ── Rows ──────────────────────────────────────────────── -->
+  <!-- Row 1 · Critical -->
+  <rect x="0" y="104" width="1280" height="62" fill="#0E0F15"/>
+  <text x="26" y="141" text-anchor="middle" fill="#6B6E7C" font-size="13" class="mono">1</text>
+  <text x="70" y="141" fill="#FAFAFA" font-size="15">Internal links &#8594; 4xx / 5xx</text>
+  <circle cx="452" cy="135" r="4" fill="#E14747"/><text x="468" y="140" fill="#9A9DAC" font-size="14">Links</text>
+  <rect x="672" y="122" width="92" height="26" rx="13" fill="#E14747" fill-opacity="0.15"/>
+  <text x="718" y="139" text-anchor="middle" fill="#E14747" font-size="13" font-weight="600">Critical</text>
+  <text x="895" y="141" text-anchor="end" fill="#FAFAFA" font-size="15" class="mono">498</text>
+  <rect x="905" y="131" width="300" height="8" rx="4" fill="#1A1C24"/>
+  <rect x="905" y="131" width="300" height="8" rx="4" fill="#E14747"/>
+  <line x1="20" y1="166" x2="1260" y2="166" stroke="#16171F" stroke-width="1"/>
+
+  <!-- Row 2 · High -->
+  <text x="26" y="203" text-anchor="middle" fill="#6B6E7C" font-size="13" class="mono">2</text>
+  <text x="70" y="203" fill="#FAFAFA" font-size="15">Missing &lt;title&gt;</text>
+  <circle cx="452" cy="197" r="4" fill="#F47A34"/><text x="468" y="202" fill="#9A9DAC" font-size="14">Meta</text>
+  <rect x="672" y="184" width="92" height="26" rx="13" fill="#F47A34" fill-opacity="0.15"/>
+  <text x="718" y="201" text-anchor="middle" fill="#F47A34" font-size="13" font-weight="600">High</text>
+  <text x="895" y="203" text-anchor="end" fill="#FAFAFA" font-size="15" class="mono">76</text>
+  <rect x="905" y="193" width="300" height="8" rx="4" fill="#1A1C24"/>
+  <rect x="905" y="193" width="46" height="8" rx="4" fill="#F47A34"/>
+  <line x1="20" y1="228" x2="1260" y2="228" stroke="#16171F" stroke-width="1"/>
+
+  <!-- Row 3 · High -->
+  <rect x="0" y="228" width="1280" height="62" fill="#0E0F15"/>
+  <text x="26" y="265" text-anchor="middle" fill="#6B6E7C" font-size="13" class="mono">3</text>
+  <text x="70" y="265" fill="#FAFAFA" font-size="15">Missing &lt;h1&gt;</text>
+  <circle cx="452" cy="259" r="4" fill="#F47A34"/><text x="468" y="264" fill="#9A9DAC" font-size="14">Meta</text>
+  <rect x="672" y="246" width="92" height="26" rx="13" fill="#F47A34" fill-opacity="0.15"/>
+  <text x="718" y="263" text-anchor="middle" fill="#F47A34" font-size="13" font-weight="600">High</text>
+  <text x="895" y="265" text-anchor="end" fill="#FAFAFA" font-size="15" class="mono">54</text>
+  <rect x="905" y="255" width="300" height="8" rx="4" fill="#1A1C24"/>
+  <rect x="905" y="255" width="33" height="8" rx="4" fill="#F47A34"/>
+  <line x1="20" y1="290" x2="1260" y2="290" stroke="#16171F" stroke-width="1"/>
+
+  <!-- Row 4 · High -->
+  <text x="26" y="327" text-anchor="middle" fill="#6B6E7C" font-size="13" class="mono">4</text>
+  <text x="70" y="327" fill="#FAFAFA" font-size="15">Noindex on indexable URLs</text>
+  <circle cx="452" cy="321" r="4" fill="#F47A34"/><text x="468" y="326" fill="#9A9DAC" font-size="14">Index</text>
+  <rect x="672" y="308" width="92" height="26" rx="13" fill="#F47A34" fill-opacity="0.15"/>
+  <text x="718" y="325" text-anchor="middle" fill="#F47A34" font-size="13" font-weight="600">High</text>
+  <text x="895" y="327" text-anchor="end" fill="#FAFAFA" font-size="15" class="mono">12</text>
+  <rect x="905" y="317" width="300" height="8" rx="4" fill="#1A1C24"/>
+  <rect x="905" y="317" width="8" height="8" rx="4" fill="#F47A34"/>
+  <line x1="20" y1="352" x2="1260" y2="352" stroke="#16171F" stroke-width="1"/>
+
+  <!-- Row 5 · High -->
+  <rect x="0" y="352" width="1280" height="62" fill="#0E0F15"/>
+  <text x="26" y="389" text-anchor="middle" fill="#6B6E7C" font-size="13" class="mono">5</text>
+  <text x="70" y="389" fill="#FAFAFA" font-size="15">Duplicate content</text>
+  <circle cx="452" cy="383" r="4" fill="#F47A34"/><text x="468" y="388" fill="#9A9DAC" font-size="14">Duplicate</text>
+  <rect x="672" y="370" width="92" height="26" rx="13" fill="#F47A34" fill-opacity="0.15"/>
+  <text x="718" y="387" text-anchor="middle" fill="#F47A34" font-size="13" font-weight="600">High</text>
+  <text x="895" y="389" text-anchor="end" fill="#FAFAFA" font-size="15" class="mono">23</text>
+  <rect x="905" y="379" width="300" height="8" rx="4" fill="#1A1C24"/>
+  <rect x="905" y="379" width="14" height="8" rx="4" fill="#F47A34"/>
+  <line x1="20" y1="414" x2="1260" y2="414" stroke="#16171F" stroke-width="1"/>
+
+  <!-- Row 6 · Medium -->
+  <text x="26" y="451" text-anchor="middle" fill="#6B6E7C" font-size="13" class="mono">6</text>
+  <text x="70" y="451" fill="#FAFAFA" font-size="15">Duplicate meta description</text>
+  <circle cx="452" cy="445" r="4" fill="#F6BB28"/><text x="468" y="450" fill="#9A9DAC" font-size="14">Meta</text>
+  <rect x="672" y="432" width="92" height="26" rx="13" fill="#F6BB28" fill-opacity="0.15"/>
+  <text x="718" y="449" text-anchor="middle" fill="#F6BB28" font-size="13" font-weight="600">Medium</text>
+  <text x="895" y="451" text-anchor="end" fill="#FAFAFA" font-size="15" class="mono">58</text>
+  <rect x="905" y="441" width="300" height="8" rx="4" fill="#1A1C24"/>
+  <rect x="905" y="441" width="35" height="8" rx="4" fill="#F6BB28"/>
+  <line x1="20" y1="476" x2="1260" y2="476" stroke="#16171F" stroke-width="1"/>
+
+  <!-- Row 7 · Medium -->
+  <rect x="0" y="476" width="1280" height="62" fill="#0E0F15"/>
+  <text x="26" y="513" text-anchor="middle" fill="#6B6E7C" font-size="13" class="mono">7</text>
+  <text x="70" y="513" fill="#FAFAFA" font-size="15">hreflang non-reciprocal</text>
+  <circle cx="452" cy="507" r="4" fill="#F6BB28"/><text x="468" y="512" fill="#9A9DAC" font-size="14">i18n</text>
+  <rect x="672" y="494" width="92" height="26" rx="13" fill="#F6BB28" fill-opacity="0.15"/>
+  <text x="718" y="511" text-anchor="middle" fill="#F6BB28" font-size="13" font-weight="600">Medium</text>
+  <text x="895" y="513" text-anchor="end" fill="#FAFAFA" font-size="15" class="mono">9</text>
+  <rect x="905" y="503" width="300" height="8" rx="4" fill="#1A1C24"/>
+  <rect x="905" y="503" width="6" height="8" rx="4" fill="#F6BB28"/>
+  <line x1="20" y1="538" x2="1260" y2="538" stroke="#16171F" stroke-width="1"/>
+
+  <!-- Row 8 · Low -->
+  <text x="26" y="575" text-anchor="middle" fill="#6B6E7C" font-size="13" class="mono">8</text>
+  <text x="70" y="575" fill="#FAFAFA" font-size="15">Images missing alt</text>
+  <circle cx="452" cy="569" r="4" fill="#35B0E9"/><text x="468" y="574" fill="#9A9DAC" font-size="14">Images</text>
+  <rect x="672" y="556" width="92" height="26" rx="13" fill="#35B0E9" fill-opacity="0.15"/>
+  <text x="718" y="573" text-anchor="middle" fill="#35B0E9" font-size="13" font-weight="600">Low</text>
+  <text x="895" y="575" text-anchor="end" fill="#FAFAFA" font-size="15" class="mono">214</text>
+  <rect x="905" y="565" width="300" height="8" rx="4" fill="#1A1C24"/>
+  <rect x="905" y="565" width="129" height="8" rx="4" fill="#35B0E9"/>
+  <line x1="20" y1="600" x2="1260" y2="600" stroke="#16171F" stroke-width="1"/>
+
+  <!-- Row 9 · Info -->
+  <rect x="0" y="600" width="1280" height="62" fill="#0E0F15"/>
+  <text x="26" y="637" text-anchor="middle" fill="#6B6E7C" font-size="13" class="mono">9</text>
+  <text x="70" y="637" fill="#FAFAFA" font-size="15">Title length guidance</text>
+  <circle cx="452" cy="631" r="4" fill="#995AF2"/><text x="468" y="636" fill="#9A9DAC" font-size="14">Meta</text>
+  <rect x="672" y="618" width="92" height="26" rx="13" fill="#995AF2" fill-opacity="0.15"/>
+  <text x="718" y="635" text-anchor="middle" fill="#A87BF5" font-size="13" font-weight="600">Info</text>
+  <text x="895" y="637" text-anchor="end" fill="#FAFAFA" font-size="15" class="mono">27</text>
+  <rect x="905" y="627" width="300" height="8" rx="4" fill="#1A1C24"/>
+  <rect x="905" y="627" width="16" height="8" rx="4" fill="#995AF2"/>
+
+  <!-- ── Sheet tabs ────────────────────────────────────────── -->
+  <rect x="0" y="662" width="1280" height="58" fill="#101119"/>
+  <line x1="0" y1="662" x2="1280" y2="662" stroke="#23252F" stroke-width="1"/>
+  <g font-size="13">
+    <text x="28"  y="696" fill="#C9A9FF" font-weight="600">Summary</text>
+    <rect x="28" y="708" width="62" height="2" rx="1" fill="#995AF2"/>
+    <text x="150" y="696" fill="#9A9DAC">Meta</text>
+    <text x="230" y="696" fill="#9A9DAC">Links</text>
+    <text x="312" y="696" fill="#9A9DAC">Index</text>
+    <text x="398" y="696" fill="#9A9DAC">i18n</text>
+    <text x="470" y="696" fill="#9A9DAC">Images</text>
+    <text x="560" y="696" fill="#9A9DAC">Performance</text>
+  </g>
+</svg>

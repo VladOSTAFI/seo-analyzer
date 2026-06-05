@@ -43,6 +43,11 @@ export function MediaFrame({
             playsInline
             aria-label={alt}
           />
+        ) : src.endsWith(".svg") ? (
+          // Vector mock asset — served as-is via a plain <img> so it bypasses
+          // the next/image SVG restriction and stays crisp at any size.
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={src} alt={alt} className="size-full object-cover" />
         ) : (
           <Image
             src={src}

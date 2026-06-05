@@ -42,6 +42,7 @@ export function ReportShowcase() {
               className="pointer-events-none absolute -inset-6 bg-[radial-gradient(ellipse_at_center,hsl(265_85%_65%/0.10),transparent_70%)] blur-2xl"
             />
             <MediaFrame
+              src="/media/report.svg"
               alt={report.mediaAlt}
               className="relative shadow-2xl shadow-primary/10"
             />

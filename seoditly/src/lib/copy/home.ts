@@ -60,7 +60,7 @@ export const home = {
   report: {
     eyebrow: "The deliverable",
     heading: "The report is the product.",
-    body: "You do not get a wall of raw data. You get a styled Excel spec — the same ТЗ format your developers already work from — with every issue categorized, ranked, and ready to action.",
+    body: "You do not get a wall of raw data. You get a styled Excel spec — the same structured format your developers already work from — with every issue categorized, ranked, and ready to action.",
     bullets: [
       "Categorized fix tables, grouped by issue type.",
       "Severity ranking so the highest-impact work surfaces first.",
