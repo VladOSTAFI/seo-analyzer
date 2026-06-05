@@ -1,0 +1,176 @@
+"use client";
+
+import { useActionState, useId, useState } from "react";
+import { useFormStatus } from "react-dom";
+import Link from "next/link";
+
+import {
+  loginSchema,
+  registerSchema,
+  type AuthFieldErrors,
+} from "@/lib/auth/validation";
+import type { AuthFormState } from "@/app/(auth)/state";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+
+/**
+ * Shared email + password auth form, used by both the login and register pages.
+ * The same zod schema runs client-side (fast feedback) and server-side (the
+ * action re-validates — never trusts the client). Tokens are set by the action
+ * in httpOnly cookies; nothing token-related ever touches this component.
+ */
+
+type AuthAction = (
+  prevState: AuthFormState,
+  formData: FormData,
+) => Promise<AuthFormState>;
+
+interface AuthFormProps {
+  mode: "login" | "register";
+  action: AuthAction;
+  initialState: AuthFormState;
+  submitLabel: string;
+  submitPendingLabel: string;
+  /** The alternate route + label shown under the form. */
+  alt: { prompt: string; href: string; label: string };
+}
+
+function SubmitButton({
+  label,
+  pendingLabel,
+}: {
+  label: string;
+  pendingLabel: string;
+}) {
+  const { pending } = useFormStatus();
+  return (
+    <Button
+      type="submit"
+      size="lg"
+      disabled={pending}
+      aria-disabled={pending}
+      className="h-11 w-full px-5 text-sm font-medium"
+    >
+      {pending ? pendingLabel : label}
+    </Button>
+  );
+}
+
+function FieldError({ id, messages }: { id: string; messages?: string[] }) {
+  if (!messages || messages.length === 0) return null;
+  return (
+    <p id={id} className="mt-1.5 text-sm text-destructive" aria-live="polite">
+      {messages[0]}
+    </p>
+  );
+}
+
+export function AuthForm({
+  mode,
+  action,
+  initialState,
+  submitLabel,
+  submitPendingLabel,
+  alt,
+}: AuthFormProps) {
+  const [state, formAction] = useActionState(action, initialState);
+  const idPrefix = useId();
+  const [clientErrors, setClientErrors] = useState<AuthFieldErrors>({});
+
+  const schema = mode === "register" ? registerSchema : loginSchema;
+  const serverErrors = state.status === "error" ? state.fieldErrors : undefined;
+  const errors: AuthFieldErrors = { ...serverErrors, ...clientErrors };
+
+  const fieldId = (name: string) => `${idPrefix}-${name}`;
+  const errorId = (name: string) => `${idPrefix}-${name}-error`;
+  const describedBy = (name: keyof AuthFieldErrors) =>
+    errors[name]?.length ? errorId(name) : undefined;
+
+  function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    const data = new FormData(event.currentTarget);
+    const result = schema.safeParse({
+      email: data.get("email"),
+      password: data.get("password"),
+    });
+    if (!result.success) {
+      event.preventDefault();
+      setClientErrors(
+        result.error.flatten().fieldErrors as AuthFieldErrors,
+      );
+      return;
+    }
+    setClientErrors({});
+  }
+
+  return (
+    <form
+      action={formAction}
+      onSubmit={handleSubmit}
+      noValidate
+      className="grid gap-5"
+    >
+      <div>
+        <Label htmlFor={fieldId("email")}>Email</Label>
+        <Input
+          id={fieldId("email")}
+          name="email"
+          type="email"
+          required
+          maxLength={254}
+          autoComplete="email"
+          placeholder="you@company.com"
+          aria-invalid={Boolean(errors.email?.length)}
+          aria-describedby={describedBy("email")}
+          className="mt-2 h-11"
+        />
+        <FieldError id={errorId("email")} messages={errors.email} />
+      </div>
+
+      <div>
+        <Label htmlFor={fieldId("password")}>Password</Label>
+        <Input
+          id={fieldId("password")}
+          name="password"
+          type="password"
+          required
+          minLength={mode === "register" ? 8 : undefined}
+          maxLength={200}
+          autoComplete={
+            mode === "register" ? "new-password" : "current-password"
+          }
+          placeholder={
+            mode === "register" ? "At least 8 characters" : "Your password"
+          }
+          aria-invalid={Boolean(errors.password?.length)}
+          aria-describedby={describedBy("password")}
+          className="mt-2 h-11"
+        />
+        <FieldError id={errorId("password")} messages={errors.password} />
+      </div>
+
+      {state.status === "error" && state.formError && (
+        <p
+          role="alert"
+          className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive"
+        >
+          {state.formError}
+        </p>
+      )}
+
+      <div className="pt-1">
+        <SubmitButton label={submitLabel} pendingLabel={submitPendingLabel} />
+      </div>
+
+      <p className="text-center text-sm text-muted-foreground">
+        {alt.prompt}{" "}
+        <Link
+          href={alt.href}
+          className="rounded-sm font-medium text-primary underline-offset-4 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          {alt.label}
+        </Link>
+      </p>
+    </form>
+  );
+}
