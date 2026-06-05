@@ -1,0 +1,147 @@
+Auditly — Marketing Site + Dashboard (Next.js) · Full Implementation Plan
+A phased, deliverable-by-deliverable plan for the Next.js front end that explains the product, captures leads, and (later) exposes a gated dashboard over the existing SEO Audit backend.
+Stack: Next.js 15 (App Router) + TypeScript (strict) · Tailwind CSS · shadcn/ui · dark theme, near-black + violet accent (cbcl.ai-inspired) · deployed on Vercel.
+Placeholder product name: Auditly — defined as one constant, trivially renameable.
+Sequencing: Phases 0–3 ship the marketing MVP with zero dependency on backend state. Phases 4–5 add the dashboard once the backend access story is decided. Each phase is independently shippable.
+
+PHASE 0 — Foundation & Design System
+Goal: Runnable app with the visual language locked in, reusable primitives, nav + footer on every route. No real page content yet.
+Setup:
+
+create-next-app — App Router, TypeScript, Tailwind, ESLint, src/, @/* alias.
+shadcn init — dark base, CSS variables on.
+shadcn components: button, card, badge, input, textarea, label, sonner, navigation-menu.
+Root layout sets <html className="dark">; dark is the only theme for MVP.
+
+Theme tokens (globals.css, HSL, mapped to shadcn vars):
+css--background: 230 25% 4%;      /* near-black */
+--foreground: 0 0% 98%;
+--card: 230 20% 7%;
+--muted: 230 12% 16%;
+--muted-foreground: 230 10% 64%;
+--primary: 265 85% 65%;        /* violet accent */
+--primary-foreground: 0 0% 100%;
+--border: 230 14% 16%;
+--ring: 265 85% 65%;
+--radius: 0.75rem;
+Type: single sans (Geist/Inter via next/font), headline 600–700 with tracking-tight, body in text-muted-foreground, generous rhythm (py-20 md:py-28).
+Structure:
+src/
+  app/ layout.tsx · page.tsx · globals.css
+  components/
+    layout/ nav.tsx · footer.tsx
+    ui/ (shadcn)
+    primitives/ section.tsx · container.tsx · stat-card.tsx · pill-badge.tsx · cta-button.tsx
+  lib/ constants.ts · copy.ts · utils.ts
+Component contracts:
+
+Container {children, className?} — max-w-6xl mx-auto px-6.
+Section {id?, eyebrow?, heading?, children, className?} — optional violet eyebrow + heading, wraps in Container.
+StatCard {value, label, sub?} — large value, label, muted sub.
+PillBadge {children, dot?} — rounded-full pill, optional pulsing violet dot.
+CTAButton {href, variant?: 'primary'|'secondary', children} — Link + shadcn Button.
+Nav — text logo (PRODUCT_NAME), links from NAV_ITEMS, right "Sign in" CTA, mobile menu under md.
+Footer — name, tagline, copyright, minimal links.
+
+constants.ts:
+tsexport const PRODUCT_NAME = "Auditly";
+export const NAV_ITEMS = [
+  { label: "How it works", href: "/how-it-works" },
+  { label: "Contact", href: "/contact" },
+];
+export const SIGN_IN_HREF = "/dashboard";
+Acceptance: builds with no type/lint errors; dark violet theme global; nav + footer on every route; all primitives render in isolation, responsive to 375px; mobile menu works; no contrast/CLS failures on the shell.
+
+PHASE 1 — Home Page
+Goal: The selling page — one key idea, proof, platform visual, the report as hero artifact, clear CTAs.
+Sections (top → bottom):
+
+Hero — PillBadge ("Early access · launching soon"); H1 (text-5xl md:text-6xl tracking-tight) Technical SEO audits, automated into a developer-ready report.; one-sentence muted subhead; CTA row (primary → /contact "Get a free audit", secondary → /how-it-works).
+Stat proof row — three StatCards: 48 → 805 (pages → findings), ~31 (automated checks), 1 (Excel report, severity-ranked).
+Platform visual — MediaFrame (image or silent looping video), aspect-video, violet ring; placeholder block sized identically to final asset.
+Report showcase — two columns: copy framing the Excel ТЗ report as deliverable + MediaFrame report screenshot; one-line bullets (categorized fix tables, severity ranking, dev-ready).
+Pipeline teaser — five labeled steps (Crawl → Enrich → Analyze → Performance → Report) as small cards with lucide icons; links to /how-it-works.
+Closing CTA band — violet-tinted full-width section, headline + primary CTA → /contact.
+
+New components: home/{hero,stat-row,platform-visual,report-showcase,pipeline-teaser,cta-band}.tsx, primitives/media-frame.tsx ({src, type, alt}; renders placeholder when src missing). app/page.tsx composes them.
+Assets: document expected files (public/media/dashboard.png 1280×720, report.png, optional demo.mp4); MediaFrame placeholder-first so the page is presentable before assets exist and swaps with zero code change. All strings in copy.ts.
+Acceptance: all six sections render, responsive 375px→desktop; CTAs route correctly; placeholders swap for real media with no code change; no CLS from media; Lighthouse perf + a11y ≥ 95; copy from copy.ts, name from PRODUCT_NAME.
+
+PHASE 2 — How It Works Page
+Goal: Set clear expectations — the process and the result a user receives.
+Sections:
+
+Intro — one-line framing: what an audit is and what you walk away with.
+Pipeline detail — the five stages as end-user-facing blocks (not internals), each with icon, title, 1–2 sentence explanation:
+
+Crawl — we fetch every page, link, image, and meta tag.
+Enrich — we map the link graph, redirects, and canonical relationships.
+Analyze — ~31 checks flag issues and rank them by severity.
+Performance — Core Web Vitals via Google PageSpeed.
+Report — a styled Excel spec your developers can action.
+
+
+Checks overview — the ~31 checks grouped into categories (Metadata, Canonical/Indexing, Links, Images, Performance, i18n) as a clean card grid or definition list — communicates breadth without overwhelming.
+What the report looks like — sample screenshot of the categorized ТЗ tables + a downloadable sample .xlsx (public/media/sample-report.xlsx, placeholder file until real one lands).
+Expectations strip — short: turnaround, that output is an Excel file, that it's prioritized by severity.
+Closing CTA → /contact.
+
+New components: how-it-works/{stage-list,checks-grid,report-preview,expectations}.tsx; reuse Section, Card, MediaFrame, CTAButton. Checks data lives in lib/checks.ts (array of {category, items[]}), so the list edits in one place.
+Acceptance: a first-time visitor understands process + output with no prior context; sample report downloads; checks render from checks.ts; fully responsive; CTA routes.
+
+PHASE 3 — Contact Page
+Goal: Capture leads / inquiries. The MVP's conversion endpoint — marketing site is fully shippable at end of this phase.
+Deliverables:
+
+Form fields: name, email (required, validated), optional site URL, message. Client + server validation with zod.
+Submission via Server Action → (a) email via Resend and/or (b) insert into a leads table (Postgres/Vercel Postgres or Supabase — whichever is provisioned). Keep the storage adapter behind a small lib/leads.ts so the backend choice is swappable.
+Anti-spam: hidden honeypot field + basic per-IP rate limit; reject bots silently.
+States: loading, success (toast via sonner + inline confirmation), error.
+Privacy note under the form.
+
+New components: contact/contact-form.tsx (client component), app/contact/actions.ts (Server Action), lib/leads.ts (storage adapter), lib/validation.ts (zod schema shared client/server).
+Acceptance: valid submit sends/stores a lead; invalid input shows field errors; honeypot rejects bots; rate limit blocks rapid repeats; success and error states both visible; no PII in logs.
+
+Milestone: Phases 0–3 = a complete, live-able marketing site. Deploy to Vercel and start receiving traffic. Phases 4–5 are the dashboard and depend on the backend access decision.
+
+
+PHASE 4 — Auth & Dashboard Shell
+Goal: "Sign in" leads to a real, gated dashboard surface, with a safe path to the auth-less backend.
+Deliverables:
+
+Auth: Clerk (fastest for MVP) or Auth.js — sign in/out, session, protected route group app/(dashboard)/.
+Nav "Sign in" becomes "Dashboard" when authenticated.
+Backend access via server-side proxy (critical): the browser never calls the SEO backend directly. Add Next.js route handlers under app/api/proxy/* (or server actions) that run server-side, attach a shared secret/header, and forward to the backend. This lets you ship against the current auth-less backend without exposing it.
+API client layer lib/api/ — typed wrappers for the backend endpoints, called only from server code.
+Dashboard shell: layout, empty states, loading skeletons, dark-theme consistent.
+
+New structure:
+app/(dashboard)/ layout.tsx · page.tsx (overview)
+app/api/proxy/[...path]/route.ts   # server-only forwarder w/ shared secret
+lib/api/ client.ts · types.ts
+middleware.ts                      # auth guard on (dashboard)
+Acceptance: unauthenticated users redirected from dashboard routes; authenticated users reach an empty dashboard; all backend traffic goes browser → Next.js server → backend, never browser → backend; shared secret injected server-side only.
+
+PHASE 5 — Audits Dashboard (Live Data)
+Goal: Authenticated users see and manage their audits over the proxied backend.
+Deliverables:
+
+Audits list (GET /audits) — paginated table: URL, status, severity rollups, created date; empty state with a "Start audit" CTA.
+Audit detail (GET /audits/:id) — status + finding rollups by severity (severity badges in violet/severity color scale).
+Findings view (GET /audits/:id/findings) — filter by severity + rule, paginated; each finding shows rule, severity, affected URL, detail.
+Report download (GET /audits/:id/report) — streamed through the proxy so the backend stays hidden.
+Start audit (POST /audits) — gated behind auth and a server-side URL allowlist/validation (block private IPs/localhost, require valid public http(s) URL) to avoid SSRF, since the backend doesn't validate yet.
+Polling or revalidation for in-progress audit status (the backend has no queue/websocket — poll GET /audits/:id on an interval while status is non-terminal).
+
+New structure:
+app/(dashboard)/audits/ page.tsx (list) · [id]/page.tsx (detail) · [id]/findings/page.tsx
+components/dashboard/ audits-table · severity-badge · findings-table · start-audit-form · report-download-button
+lib/api/ (extend with audits + findings + report methods)
+Acceptance: signed-in user starts an audit (URL validated server-side), watches status update via polling, browses filtered findings, downloads the report — all proxied, no direct browser→backend traffic; SSRF-prone URLs rejected before reaching the backend.
+
+Cross-Phase Principles
+Hold these throughout so iteration stays cheap and the MVP ships safely:
+Swappable content. All copy in copy.ts, nav/product name in constants.ts, checks in checks.ts, lead storage behind lib/leads.ts — iterating wording, branding, or providers never means hunting through JSX.
+Placeholder-first media. MediaFrame renders correctly-sized placeholders so Phases 0–2 ship presentable before any real screenshot exists; assets drop into public/media/ with zero code change. Capture real screenshots + the sample report from the covecta.io run when convenient.
+Server-side backend boundary. From Phase 4 on, the browser never touches the SEO backend directly. The Next.js server proxy (with shared secret) plus server-side URL validation is what lets you safely put a dashboard in front of an auth-less, queue-less backend — deferring backend hardening (auth, SSRF protection, job queue) without blocking the front end.
+Ship the marketing site first. Phases 0–3 are fully decoupled from backend state; deploy and start receiving traffic before the dashboard exists.

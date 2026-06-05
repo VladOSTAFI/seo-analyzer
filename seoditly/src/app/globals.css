@@ -1,0 +1,165 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+  --font-heading: var(--font-sans);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+
+  /* Severity scale — violet-anchored, used by the dashboard (Phase 5). */
+  --color-severity-critical: var(--severity-critical);
+  --color-severity-high: var(--severity-high);
+  --color-severity-medium: var(--severity-medium);
+  --color-severity-low: var(--severity-low);
+  --color-severity-info: var(--severity-info);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+}
+
+/*
+ * Dark is the only theme for the MVP. Tokens come straight from the
+ * Phase 0 plan (HSL), mapped onto shadcn's CSS variables.
+ */
+:root {
+  --background: hsl(230 25% 4%); /* near-black */
+  --foreground: hsl(0 0% 98%);
+
+  --card: hsl(230 20% 7%);
+  --card-foreground: hsl(0 0% 98%);
+
+  --popover: hsl(230 20% 8%);
+  --popover-foreground: hsl(0 0% 98%);
+
+  --primary: hsl(265 85% 65%); /* violet accent */
+  --primary-foreground: hsl(0 0% 100%);
+
+  --secondary: hsl(230 14% 14%);
+  --secondary-foreground: hsl(0 0% 98%);
+
+  --muted: hsl(230 12% 16%);
+  --muted-foreground: hsl(230 10% 64%);
+
+  --accent: hsl(265 50% 18%);
+  --accent-foreground: hsl(0 0% 98%);
+
+  --destructive: hsl(0 72% 58%);
+  --destructive-foreground: hsl(0 0% 100%);
+
+  --border: hsl(230 14% 16%);
+  --input: hsl(230 14% 16%);
+  --ring: hsl(265 85% 65%);
+
+  --radius: 0.75rem;
+
+  /* Severity colors: critical/high lean red→amber, info dips to violet. */
+  --severity-critical: hsl(0 72% 58%);
+  --severity-high: hsl(22 90% 58%);
+  --severity-medium: hsl(43 92% 56%);
+  --severity-low: hsl(199 80% 56%);
+  --severity-info: hsl(265 85% 65%);
+}
+
+/*
+ * The MVP forces dark via <html className="dark"> in the root layout.
+ * Mirror the :root tokens so anything keyed on the `.dark` selector
+ * (shadcn components, the `dark:` variant) resolves identically.
+ */
+.dark {
+  --background: hsl(230 25% 4%);
+  --foreground: hsl(0 0% 98%);
+  --card: hsl(230 20% 7%);
+  --card-foreground: hsl(0 0% 98%);
+  --popover: hsl(230 20% 8%);
+  --popover-foreground: hsl(0 0% 98%);
+  --primary: hsl(265 85% 65%);
+  --primary-foreground: hsl(0 0% 100%);
+  --secondary: hsl(230 14% 14%);
+  --secondary-foreground: hsl(0 0% 98%);
+  --muted: hsl(230 12% 16%);
+  --muted-foreground: hsl(230 10% 64%);
+  --accent: hsl(265 50% 18%);
+  --accent-foreground: hsl(0 0% 98%);
+  --destructive: hsl(0 72% 58%);
+  --destructive-foreground: hsl(0 0% 100%);
+  --border: hsl(230 14% 16%);
+  --input: hsl(230 14% 16%);
+  --ring: hsl(265 85% 65%);
+
+  --severity-critical: hsl(0 72% 58%);
+  --severity-high: hsl(22 90% 58%);
+  --severity-medium: hsl(43 92% 56%);
+  --severity-low: hsl(199 80% 56%);
+  --severity-info: hsl(265 85% 65%);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  html {
+    @apply font-sans;
+  }
+  /* Headlines: tight tracking, weighted 600–700 by the type scale. */
+  h1,
+  h2,
+  h3 {
+    @apply tracking-tight;
+  }
+}
+
+/*
+ * Hero load-in: a subtle fade + lift, staggered per element via inline
+ * `animation-delay`. CSS-only and fully disabled under reduced-motion so the
+ * content is visible immediately (no opacity:0 trap).
+ */
+@keyframes hero-rise {
+  from {
+    opacity: 0;
+    transform: translateY(0.75rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.hero-rise {
+  animation: hero-rise 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-rise {
+    animation: none;
+  }
+}
