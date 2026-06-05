@@ -5,20 +5,23 @@ import { useFormStatus } from "react-dom";
 import Link from "next/link";
 
 import {
-  loginSchema,
-  registerSchema,
+  getLoginSchema,
+  getRegisterSchema,
   type AuthFieldErrors,
 } from "@/lib/auth/validation";
-import type { AuthFormState } from "@/app/(auth)/state";
+import type { AuthFormState } from "@/app/[locale]/(auth)/state";
+import type { Locale } from "@/lib/i18n/config";
+import type { Auth } from "@/lib/copy/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 /**
  * Shared email + password auth form, used by both the login and register pages.
- * The same zod schema runs client-side (fast feedback) and server-side (the
- * action re-validates — never trusts the client). Tokens are set by the action
- * in httpOnly cookies; nothing token-related ever touches this component.
+ * The same (locale-correct) zod schema runs client-side (fast feedback) and
+ * server-side (the action re-validates — never trusts the client). Tokens are
+ * set by the action in httpOnly cookies; nothing token-related touches this
+ * component. A hidden `locale` field carries the language to the action.
  */
 
 type AuthAction = (
@@ -26,10 +29,14 @@ type AuthAction = (
   formData: FormData,
 ) => Promise<AuthFormState>;
 
+type FormLabels = Auth["form"];
+
 interface AuthFormProps {
   mode: "login" | "register";
+  locale: Locale;
   action: AuthAction;
   initialState: AuthFormState;
+  labels: FormLabels;
   submitLabel: string;
   submitPendingLabel: string;
   /** The alternate route + label shown under the form. */
@@ -68,8 +75,10 @@ function FieldError({ id, messages }: { id: string; messages?: string[] }) {
 
 export function AuthForm({
   mode,
+  locale,
   action,
   initialState,
+  labels,
   submitLabel,
   submitPendingLabel,
   alt,
@@ -78,7 +87,8 @@ export function AuthForm({
   const idPrefix = useId();
   const [clientErrors, setClientErrors] = useState<AuthFieldErrors>({});
 
-  const schema = mode === "register" ? registerSchema : loginSchema;
+  const schema =
+    mode === "register" ? getRegisterSchema(locale) : getLoginSchema(locale);
   const serverErrors = state.status === "error" ? state.fieldErrors : undefined;
   const errors: AuthFieldErrors = { ...serverErrors, ...clientErrors };
 
@@ -110,8 +120,10 @@ export function AuthForm({
       noValidate
       className="grid gap-5"
     >
+      <input type="hidden" name="locale" value={locale} />
+
       <div>
-        <Label htmlFor={fieldId("email")}>Email</Label>
+        <Label htmlFor={fieldId("email")}>{labels.emailLabel}</Label>
         <Input
           id={fieldId("email")}
           name="email"
@@ -119,7 +131,7 @@ export function AuthForm({
           required
           maxLength={254}
           autoComplete="email"
-          placeholder="you@company.com"
+          placeholder={labels.emailPlaceholder}
           aria-invalid={Boolean(errors.email?.length)}
           aria-describedby={describedBy("email")}
           className="mt-2 h-11"
@@ -128,7 +140,7 @@ export function AuthForm({
       </div>
 
       <div>
-        <Label htmlFor={fieldId("password")}>Password</Label>
+        <Label htmlFor={fieldId("password")}>{labels.passwordLabel}</Label>
         <Input
           id={fieldId("password")}
           name="password"
@@ -140,7 +152,9 @@ export function AuthForm({
             mode === "register" ? "new-password" : "current-password"
           }
           placeholder={
-            mode === "register" ? "At least 8 characters" : "Your password"
+            mode === "register"
+              ? labels.passwordPlaceholderRegister
+              : labels.passwordPlaceholderLogin
           }
           aria-invalid={Boolean(errors.password?.length)}
           aria-describedby={describedBy("password")}

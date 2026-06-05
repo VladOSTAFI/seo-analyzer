@@ -7,10 +7,9 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-import { howItWorks } from "@/lib/copy/how-it-works";
+import { getRequestLocale } from "@/lib/i18n/server";
+import { getHowItWorks } from "@/lib/copy/how-it-works";
 import { Section } from "@/components/primitives/section";
-
-const { pipeline } = howItWorks;
 
 /** Maps each stage `key` to its icon — keeps icons out of the copy file. */
 const STAGE_ICONS: Record<string, LucideIcon> = {
@@ -26,7 +25,9 @@ const STAGE_ICONS: Record<string, LucideIcon> = {
  * → Performance → Report). A vertical, numbered list with a connecting rail so
  * the order reads as a process — each row is an icon, title, and explanation.
  */
-export function StageList() {
+export async function StageList() {
+  const { pipeline } = getHowItWorks(await getRequestLocale());
+
   return (
     <Section eyebrow={pipeline.eyebrow} heading={pipeline.heading}>
       <p className="-mt-6 mb-12 max-w-2xl text-lg text-muted-foreground">

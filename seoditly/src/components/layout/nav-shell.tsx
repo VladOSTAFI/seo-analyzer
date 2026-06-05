@@ -5,22 +5,36 @@ import Link from "next/link";
 import { Menu, X } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { NAV_ITEMS } from "@/lib/constants";
 import { Container } from "@/components/primitives/container";
 import { Button } from "@/components/ui/button";
 import { Logo } from "@/components/brand/logo";
+import { LanguageSwitcher } from "@/components/i18n/language-switcher";
 
 /**
- * Client shell for the top navigation: text logo, primary links, and the
- * collapsing mobile menu. The auth-aware right-hand controls are resolved by
- * the server {@link Nav} component and injected as `desktopAuth` / `mobileAuth`
- * props, so this component owns only the open/close UI state — no session or
- * token access happens in client code.
+ * Client shell for the top navigation: logo lockup, primary links, language
+ * switcher, and the collapsing mobile menu. All locale-aware data (hrefs,
+ * labels) is resolved server-side in {@link Nav} and passed in as props, so this
+ * component owns only the open/close UI state — no session or token access in
+ * client code.
  */
 export function NavShell({
+  homeHref,
+  homeLabel,
+  navItems,
+  openMenuLabel,
+  closeMenuLabel,
+  languageSwitcherLabel,
+  languageHeading,
   desktopAuth,
   mobileAuth,
 }: {
+  homeHref: string;
+  homeLabel: string;
+  navItems: { label: string; href: string }[];
+  openMenuLabel: string;
+  closeMenuLabel: string;
+  languageSwitcherLabel: string;
+  languageHeading: string;
   desktopAuth: React.ReactNode;
   mobileAuth: React.ReactNode;
 }) {
@@ -31,8 +45,8 @@ export function NavShell({
       <Container>
         <nav className="flex h-16 items-center justify-between gap-6">
           <Link
-            href="/"
-            aria-label="seoditly home"
+            href={homeHref}
+            aria-label={homeLabel}
             className="inline-flex items-center rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
             onClick={() => setOpen(false)}
           >
@@ -41,7 +55,7 @@ export function NavShell({
 
           {/* Desktop links */}
           <div className="hidden items-center gap-8 md:flex">
-            {NAV_ITEMS.map((item) => (
+            {navItems.map((item) => (
               <Link
                 key={item.href}
                 href={item.href}
@@ -53,14 +67,20 @@ export function NavShell({
           </div>
 
           {/* Desktop right slot */}
-          <div className="hidden md:block">{desktopAuth}</div>
+          <div className="hidden items-center gap-1 md:flex">
+            <LanguageSwitcher
+              switcherLabel={languageSwitcherLabel}
+              heading={languageHeading}
+            />
+            {desktopAuth}
+          </div>
 
           {/* Mobile toggle */}
           <Button
             variant="ghost"
             size="icon"
             className="md:hidden"
-            aria-label={open ? "Close menu" : "Open menu"}
+            aria-label={open ? closeMenuLabel : openMenuLabel}
             aria-expanded={open}
             onClick={() => setOpen((v) => !v)}
           >
@@ -78,7 +98,7 @@ export function NavShell({
       >
         <Container>
           <div className="flex flex-col gap-1 py-4">
-            {NAV_ITEMS.map((item) => (
+            {navItems.map((item) => (
               <Link
                 key={item.href}
                 href={item.href}
@@ -88,6 +108,12 @@ export function NavShell({
                 {item.label}
               </Link>
             ))}
+            <div className="mt-2 px-2">
+              <LanguageSwitcher
+                switcherLabel={languageSwitcherLabel}
+                heading={languageHeading}
+              />
+            </div>
             <div className="mt-3" onClick={() => setOpen(false)}>
               {mobileAuth}
             </div>

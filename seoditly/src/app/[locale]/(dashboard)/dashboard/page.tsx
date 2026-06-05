@@ -4,7 +4,10 @@ import { FileSearch, Activity, FileSpreadsheet, ArrowRight } from "lucide-react"
 
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { listAudits, ApiError } from "@/lib/api/client";
-import { PRODUCT_NAME, AUDITS_HREF } from "@/lib/constants";
+import { AUDITS_HREF } from "@/lib/constants";
+import { DEFAULT_LOCALE, isLocale, localeHref } from "@/lib/i18n/config";
+import { getRequestLocale } from "@/lib/i18n/server";
+import { getDashboard } from "@/lib/copy/dashboard";
 import type { AuditDto } from "@/lib/api/types";
 import { Button } from "@/components/ui/button";
 import {
@@ -17,15 +20,21 @@ import {
 import { AuditsTable } from "@/components/dashboard/audits-table";
 import { StartAuditForm } from "@/components/dashboard/start-audit-form";
 
-export const metadata: Metadata = {
-  title: "Dashboard",
-  description: `Your ${PRODUCT_NAME} audit overview.`,
-};
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ locale: string }>;
+}): Promise<Metadata> {
+  const { locale: raw } = await params;
+  const locale = isLocale(raw) ? raw : DEFAULT_LOCALE;
+  const { meta } = getDashboard(locale);
+  return { title: meta.dashboardTitle, description: meta.dashboardDescription };
+}
 
 /**
  * Dashboard overview (Phase 5 — live). Fetches a small slice of the caller's
  * audits via the Bearer API client and shows: a start-audit form, a "recent
- * audits" preview (linking to the full list), and roll-up counters.
+ * audits" preview, and roll-up counters.
  *
  * `force-dynamic` keeps this per-request so it compiles + renders with the
  * backend DOWN — an unreachable backend degrades to empty counters and a soft
@@ -36,6 +45,8 @@ export const dynamic = "force-dynamic";
 const RECENT_LIMIT = 5;
 
 export default async function DashboardPage() {
+  const locale = await getRequestLocale();
+  const t = getDashboard(locale);
   const user = await getCurrentUser();
   const isAdmin = user?.role === "admin";
 
@@ -50,26 +61,30 @@ export default async function DashboardPage() {
     unreachable = e instanceof ApiError && e.status === 0;
   }
 
+  const latestStatus = recent[0]
+    ? t.status[recent[0].status] ?? recent[0].status
+    : "—";
+
   const overview = [
     {
       icon: Activity,
-      label: "Audits run",
+      label: t.dashboard.auditsRun,
       value: unreachable ? "—" : String(total),
-      sub: "Across all your sites.",
+      sub: t.dashboard.auditsRunSub,
     },
     {
       icon: FileSearch,
-      label: "Latest status",
-      value: recent[0]?.status ?? "—",
-      sub: "Your most recent audit.",
+      label: t.dashboard.latestStatus,
+      value: latestStatus,
+      sub: t.dashboard.latestStatusSub,
     },
     {
       icon: FileSpreadsheet,
-      label: "Reports",
+      label: t.dashboard.reports,
       value: unreachable
         ? "—"
         : String(recent.filter((a) => a.reportPath !== null).length),
-      sub: "Ready to download (recent).",
+      sub: t.dashboard.reportsSub,
     },
   ];
 
@@ -79,21 +94,21 @@ export default async function DashboardPage() {
       <header className="flex flex-col gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-foreground md:text-3xl">
-            Dashboard
+            {t.dashboard.heading}
           </h1>
           <p className="mt-1.5 text-sm text-muted-foreground">
             {user ? (
               <>
-                Signed in as{" "}
+                {t.dashboard.signedInAs}{" "}
                 <span className="text-foreground">{user.email}</span>
                 {isAdmin && (
                   <span className="ml-2 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
-                    admin
+                    {t.dashboard.adminBadge}
                   </span>
                 )}
               </>
             ) : (
-              "Welcome back."
+              t.dashboard.welcomeBack
             )}
           </p>
         </div>
@@ -101,14 +116,14 @@ export default async function DashboardPage() {
         {/* Start audit (live). */}
         <div className="rounded-2xl border border-border bg-card p-5 md:p-6">
           <h2 className="mb-3 text-sm font-medium text-foreground">
-            Start a new audit
+            {t.dashboard.startNewAudit}
           </h2>
-          <StartAuditForm />
+          <StartAuditForm locale={locale} strings={t.startForm} />
         </div>
       </header>
 
       {/* Overview cards */}
-      <section aria-label="Overview" className="grid gap-4 sm:grid-cols-3">
+      <section aria-label={t.dashboard.overviewLabel} className="grid gap-4 sm:grid-cols-3">
         {overview.map(({ icon: Icon, label, value, sub }) => (
           <Card key={label}>
             <CardHeader>
@@ -116,7 +131,7 @@ export default async function DashboardPage() {
                 <Icon aria-hidden className="size-4 text-primary" />
                 <CardDescription>{label}</CardDescription>
               </div>
-              <CardTitle className="text-3xl font-semibold capitalize tracking-tight text-foreground">
+              <CardTitle className="text-3xl font-semibold tracking-tight text-foreground">
                 {value}
               </CardTitle>
             </CardHeader>
@@ -128,10 +143,10 @@ export default async function DashboardPage() {
       </section>
 
       {/* Recent audits preview / empty state. */}
-      <section aria-label="Recent audits" className="space-y-4">
+      <section aria-label={t.dashboard.recentAudits} className="space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-medium text-foreground">
-            {isAdmin ? "Recent audits (all users)" : "Recent audits"}
+            {isAdmin ? t.dashboard.recentAuditsAll : t.dashboard.recentAudits}
           </h2>
           <Button
             asChild
@@ -139,8 +154,8 @@ export default async function DashboardPage() {
             size="sm"
             className="h-9 text-sm text-muted-foreground"
           >
-            <Link href={AUDITS_HREF}>
-              View all
+            <Link href={localeHref(AUDITS_HREF, locale)}>
+              {t.dashboard.viewAll}
               <ArrowRight aria-hidden />
             </Link>
           </Button>
@@ -148,7 +163,7 @@ export default async function DashboardPage() {
 
         {unreachable ? (
           <div className="rounded-2xl border border-dashed border-border bg-card/40 px-6 py-10 text-center text-sm text-muted-foreground">
-            Your audits will appear here once the backend is available.
+            {t.dashboard.unreachable}
           </div>
         ) : recent.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-border bg-card/40 px-6 py-16 text-center">
@@ -156,15 +171,14 @@ export default async function DashboardPage() {
               <FileSearch aria-hidden className="size-6 text-primary" />
             </div>
             <h3 className="mt-5 text-base font-medium text-foreground">
-              No audits yet
+              {t.dashboard.noAuditsTitle}
             </h3>
             <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
-              Start your first audit above. Its status, severity rollups, and
-              report will show up here.
+              {t.dashboard.noAuditsBody}
             </p>
           </div>
         ) : (
-          <AuditsTable items={recent} />
+          <AuditsTable items={recent} locale={locale} />
         )}
       </section>
     </div>

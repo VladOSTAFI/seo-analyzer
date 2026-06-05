@@ -1,24 +1,37 @@
 import type { Metadata } from "next";
 import { ShieldCheck } from "lucide-react";
 
-import { contact } from "@/lib/copy/contact";
+import { DEFAULT_LOCALE, isLocale } from "@/lib/i18n/config";
+import { alternatesFor } from "@/lib/i18n/metadata";
+import { getRequestLocale } from "@/lib/i18n/server";
+import { getContact } from "@/lib/copy/contact";
 import { Container } from "@/components/primitives/container";
 import { PillBadge } from "@/components/primitives/pill-badge";
 import { ContactForm } from "@/components/contact/contact-form";
 
-export const metadata: Metadata = {
-  // Composed with the layout's `%s · seoditly` title template.
-  title: contact.meta.title,
-  description: contact.meta.description,
-};
-
-const { intro, privacy } = contact;
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ locale: string }>;
+}): Promise<Metadata> {
+  const { locale: raw } = await params;
+  const locale = isLocale(raw) ? raw : DEFAULT_LOCALE;
+  const { meta } = getContact(locale);
+  return {
+    title: meta.title,
+    description: meta.description,
+    alternates: alternatesFor("/contact", locale),
+  };
+}
 
 /**
- * Phase 3 — Contact. Intro framing (badge + h1 + muted subhead, matching the
- * home / how-it-works intro style), the lead-capture form, and a privacy note.
+ * Phase 3 — Contact. Intro framing (badge + h1 + muted subhead), the
+ * lead-capture form (its strings handed down localized), and a privacy note.
  */
-export default function ContactPage() {
+export default async function ContactPage() {
+  const locale = await getRequestLocale();
+  const { intro, privacy, form } = getContact(locale);
+
   return (
     <section className="relative overflow-hidden border-b border-border">
       <div
@@ -40,7 +53,7 @@ export default function ContactPage() {
 
           {/* Form + privacy note */}
           <div>
-            <ContactForm />
+            <ContactForm strings={form} locale={locale} />
             <p className="mt-4 flex items-start gap-2 text-sm text-muted-foreground">
               <ShieldCheck className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden />
               <span>{privacy}</span>

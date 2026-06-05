@@ -1,6 +1,9 @@
 import type { Metadata } from "next";
 
-import { howItWorks } from "@/lib/copy/how-it-works";
+import { DEFAULT_LOCALE, isLocale, localeHref } from "@/lib/i18n/config";
+import { alternatesFor } from "@/lib/i18n/metadata";
+import { getRequestLocale } from "@/lib/i18n/server";
+import { getHowItWorks } from "@/lib/copy/how-it-works";
 import { Container } from "@/components/primitives/container";
 import { PillBadge } from "@/components/primitives/pill-badge";
 import { CTAButton } from "@/components/primitives/cta-button";
@@ -9,20 +12,30 @@ import { ChecksGrid } from "@/components/how-it-works/checks-grid";
 import { ReportPreview } from "@/components/how-it-works/report-preview";
 import { Expectations } from "@/components/how-it-works/expectations";
 
-export const metadata: Metadata = {
-  // Composed with the layout's `%s · seoditly` title template.
-  title: howItWorks.meta.title,
-  description: howItWorks.meta.description,
-};
-
-const { intro, cta } = howItWorks;
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ locale: string }>;
+}): Promise<Metadata> {
+  const { locale: raw } = await params;
+  const locale = isLocale(raw) ? raw : DEFAULT_LOCALE;
+  const { meta } = getHowItWorks(locale);
+  return {
+    title: meta.title,
+    description: meta.description,
+    alternates: alternatesFor("/how-it-works", locale),
+  };
+}
 
 /**
  * Phase 2 — How It Works. Sets process + output expectations for a first-time
  * visitor: intro → pipeline stages → checks overview → report preview →
  * expectations → closing CTA.
  */
-export default function HowItWorksPage() {
+export default async function HowItWorksPage() {
+  const locale = await getRequestLocale();
+  const { intro, cta } = getHowItWorks(locale);
+
   return (
     <>
       {/* Intro — what an audit is and what you walk away with. */}
@@ -65,7 +78,7 @@ export default function HowItWorksPage() {
                 {cta.body}
               </p>
               <div className="mt-8 flex justify-center">
-                <CTAButton href={cta.primary.href} variant="primary">
+                <CTAButton href={localeHref(cta.primary.href, locale)} variant="primary">
                   {cta.primary.label}
                 </CTAButton>
               </div>

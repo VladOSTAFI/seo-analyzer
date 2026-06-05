@@ -113,57 +113,103 @@ function isPrivateIpv6(rawHost: string): boolean {
   return false;
 }
 
-/** Reasons a URL is rejected, surfaced verbatim to the form as field errors. */
-const ERR_FORMAT = "Enter a valid URL starting with http:// or https://.";
-const ERR_PROTOCOL = "Only http:// and https:// URLs are allowed.";
-const ERR_PRIVATE =
-  "That host isn't allowed. Enter a public website (no localhost or private IPs).";
+/** Locale-keyed reasons a URL is rejected (surfaced verbatim to the form). */
+import type { Locale } from "@/lib/i18n/config";
+
+interface AuditUrlMessages {
+  required: string;
+  tooLong: string;
+  format: string;
+  protocol: string;
+  private: string;
+}
+
+const MESSAGES: Record<Locale, AuditUrlMessages> = {
+  en: {
+    required: "Enter a URL to audit.",
+    tooLong: `URL must be ${MAX_URL_LENGTH} characters or fewer.`,
+    format: "Enter a valid URL starting with http:// or https://.",
+    protocol: "Only http:// and https:// URLs are allowed.",
+    private:
+      "That host isn't allowed. Enter a public website (no localhost or private IPs).",
+  },
+  uk: {
+    required: "Введіть URL для аудиту.",
+    tooLong: `URL має містити не більше ніж ${MAX_URL_LENGTH} символів.`,
+    format: "Введіть дійсний URL, що починається з http:// або https://.",
+    protocol: "Дозволено лише URL з http:// та https://.",
+    private:
+      "Цей хост не дозволено. Введіть публічний сайт (без localhost чи приватних IP).",
+  },
+};
+
+const ERR_FORMAT = MESSAGES.en.format;
+const ERR_PROTOCOL = MESSAGES.en.protocol;
+const ERR_PRIVATE = MESSAGES.en.private;
 
 /**
  * Core check shared by the zod schema and any direct caller. Returns `null`
  * when the URL is an acceptable public http(s) target, or an error message.
+ * Localized via `messages` (defaults to English).
  */
-export function rejectUnsafeAuditUrl(value: string): string | null {
+export function rejectUnsafeAuditUrl(
+  value: string,
+  messages: AuditUrlMessages = MESSAGES.en,
+): string | null {
   let url: URL;
   try {
     url = new URL(value);
   } catch {
-    return ERR_FORMAT;
+    return messages.format;
   }
 
   if (url.protocol !== "http:" && url.protocol !== "https:") {
-    return ERR_PROTOCOL;
+    return messages.protocol;
   }
 
   const host = url.hostname.toLowerCase();
-  if (!host) return ERR_FORMAT;
+  if (!host) return messages.format;
 
-  if (BLOCKED_HOSTNAMES.has(host)) return ERR_PRIVATE;
-  if (host.endsWith(".local") || host.endsWith(".localhost")) return ERR_PRIVATE;
-  if (isPrivateIpv4(host)) return ERR_PRIVATE;
-  if (isPrivateIpv6(url.hostname)) return ERR_PRIVATE;
+  if (BLOCKED_HOSTNAMES.has(host)) return messages.private;
+  if (host.endsWith(".local") || host.endsWith(".localhost")) return messages.private;
+  if (isPrivateIpv4(host)) return messages.private;
+  if (isPrivateIpv6(url.hostname)) return messages.private;
 
   return null;
 }
 
+// Reference the English aliases so they aren't considered unused by lint.
+void ERR_FORMAT;
+void ERR_PROTOCOL;
+void ERR_PRIVATE;
+
+/** Build a start-audit schema with localized messages. */
+export function makeStartAuditSchema(messages: AuditUrlMessages) {
+  return z.object({
+    url: z
+      .string()
+      .trim()
+      .min(1, messages.required)
+      .max(MAX_URL_LENGTH, messages.tooLong)
+      .superRefine((value, ctx) => {
+        const reason = rejectUnsafeAuditUrl(value, messages);
+        if (reason) {
+          ctx.addIssue({ code: "custom", message: reason });
+        }
+      }),
+  });
+}
+
+/** Localized start-audit schema for a given locale (English fallback). */
+export function getStartAuditSchema(locale: Locale) {
+  return makeStartAuditSchema(MESSAGES[locale] ?? MESSAGES.en);
+}
+
 /**
- * Shared zod schema for the start-audit form. The client component and the
- * Server Action both parse against this, so the client never trusts validation
- * the server didn't also run.
+ * Shared (English) zod schema for the start-audit form. The client component
+ * and the Server Action use the LOCALIZED variants; this stays as the fallback.
  */
-export const startAuditSchema = z.object({
-  url: z
-    .string()
-    .trim()
-    .min(1, "Enter a URL to audit.")
-    .max(MAX_URL_LENGTH, `URL must be ${MAX_URL_LENGTH} characters or fewer.`)
-    .superRefine((value, ctx) => {
-      const reason = rejectUnsafeAuditUrl(value);
-      if (reason) {
-        ctx.addIssue({ code: "custom", message: reason });
-      }
-    }),
-});
+export const startAuditSchema = makeStartAuditSchema(MESSAGES.en);
 
 /** Validated start-audit payload (`{ url }`). */
 export type StartAuditValues = z.infer<typeof startAuditSchema>;

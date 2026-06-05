@@ -1,4 +1,5 @@
 import type { Severity } from "@/lib/api/types";
+import type { Locale } from "@/lib/i18n/config";
 
 /**
  * The one place severity → colour is defined for the dashboard. Both the
@@ -29,11 +30,29 @@ export const SEVERITY_FILL_CLASS: Record<Severity, string> = {
   info: "bg-muted-foreground/60",
 };
 
-/** Human-friendly label (currently identity; kept as a seam for i18n/rename). */
-export const SEVERITY_LABEL: Record<Severity, string> = {
-  critical: "Critical",
-  high: "High",
-  medium: "Medium",
-  low: "Low",
-  info: "Info",
+/** Per-locale human-friendly severity labels. English is the fallback. */
+const SEVERITY_LABEL_BY_LOCALE: Record<Locale, Record<Severity, string>> = {
+  en: {
+    critical: "Critical",
+    high: "High",
+    medium: "Medium",
+    low: "Low",
+    info: "Info",
+  },
+  uk: {
+    critical: "Критична",
+    high: "Висока",
+    medium: "Середня",
+    low: "Низька",
+    info: "Інформація",
+  },
 };
+
+/** English severity labels (back-compat for non-localized call sites). */
+export const SEVERITY_LABEL: Record<Severity, string> =
+  SEVERITY_LABEL_BY_LOCALE.en;
+
+/** Localized severity labels for the active locale (falls back to English). */
+export function getSeverityLabels(locale: Locale): Record<Severity, string> {
+  return SEVERITY_LABEL_BY_LOCALE[locale] ?? SEVERITY_LABEL_BY_LOCALE.en;
+}

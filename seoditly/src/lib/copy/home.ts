@@ -1,17 +1,18 @@
 import { PRODUCT_NAME } from "@/lib/constants";
+import type { Locale } from "@/lib/i18n/config";
+import { mergeCopy, type DeepPartial } from "@/lib/i18n/merge";
 
 /**
- * All user-facing copy for the home page lives here so wording can be
- * iterated without touching JSX. Mirrors the shape of {@link common}:
- * a typed `const ... as const` object, imported by `components/home/*`.
+ * All user-facing copy for the home page. `homeEn` is the typed English source
+ * of truth (and the i18n fallback); `homeUk` is a `DeepPartial` override.
+ * `getHome(locale)` deep-merges UK over EN so any untranslated key falls back
+ * to English. Components call `getHome(locale)`; `home` stays English.
  *
- * Expected media assets (drop into `public/media/` to swap the
- * `MediaFrame` placeholders with zero code change):
+ * Expected media assets (drop into `public/media/` to swap the placeholders):
  *   - `public/media/dashboard.png` — 1280×720 product dashboard screenshot.
  *   - `public/media/report.png`    — screenshot of the Excel report tables.
  */
-export const home = {
-  /** Page-level metadata (composed with the layout's title template). */
+export const homeEn = {
   meta: {
     title: "Automated technical SEO audits",
     description:
@@ -53,8 +54,8 @@ export const home = {
   platform: {
     eyebrow: "The platform",
     heading: "Every issue, mapped and ranked in one place.",
-    /** Accessible description for the dashboard MediaFrame placeholder. */
-    mediaAlt: "Product dashboard — crawl coverage, findings by severity, and report status",
+    mediaAlt:
+      "Product dashboard — crawl coverage, findings by severity, and report status",
   },
 
   report: {
@@ -66,8 +67,8 @@ export const home = {
       "Severity ranking so the highest-impact work surfaces first.",
       "Developer-ready: each row maps to a concrete, shippable change.",
     ],
-    /** Accessible description for the report MediaFrame placeholder. */
-    mediaAlt: "Excel report screenshot — categorized fix tables ranked by severity",
+    mediaAlt:
+      "Excel report screenshot — categorized fix tables ranked by severity",
   },
 
   pipeline: {
@@ -78,12 +79,14 @@ export const home = {
       {
         key: "crawl",
         title: "Crawl",
-        description: "We fetch every page, link, image, and meta tag on your site.",
+        description:
+          "We fetch every page, link, image, and meta tag on your site.",
       },
       {
         key: "enrich",
         title: "Enrich",
-        description: "We map the link graph, redirects, and canonical relationships.",
+        description:
+          "We map the link graph, redirects, and canonical relationships.",
       },
       {
         key: "analyze",
@@ -110,4 +113,116 @@ export const home = {
   },
 } as const;
 
-export type Home = typeof home;
+export type Home = typeof homeEn;
+
+const homeUk: DeepPartial<Home> = {
+  meta: {
+    title: "Автоматизований технічний SEO-аудит",
+    description:
+      `${PRODUCT_NAME} сканує ваш сайт, виконує ~31 технічну перевірку й ` +
+      "передає розробникам Excel-звіт із пріоритетами за критичністю, готовий до роботи.",
+  },
+
+  hero: {
+    badge: "Ранній доступ · скоро запуск",
+    headline:
+      "Технічний SEO-аудит, автоматично зведений у звіт для розробників.",
+    subhead:
+      "Вкажіть нам свій сайт. Ми проскануємо кожну сторінку, виконаємо ~31 технічну перевірку й повернемо єдину специфікацію із пріоритетами за критичністю, з яким зможуть працювати ваші розробники.",
+    primaryCta: { label: "Безкоштовний аудит", href: "/contact" },
+    secondaryCta: { label: "Як це працює", href: "/how-it-works" },
+  },
+
+  stats: {
+    eyebrow: "Факти",
+    items: [
+      {
+        value: "48 → 805",
+        label: "Сторінки на вході — висновки на виході",
+        sub: "З одного сканування covecta.io.",
+      },
+      {
+        value: "~31",
+        label: "Автоматичних перевірок",
+        sub: "Метадані, canonical, посилання, зображення, швидкодія, i18n.",
+      },
+      {
+        value: "1",
+        label: "Excel-звіт",
+        sub: "З пріоритетами за критичністю, готовий для розробників.",
+      },
+    ],
+  },
+
+  platform: {
+    eyebrow: "Платформа",
+    heading: "Усі проблеми зібрані й упорядковані в одному місці.",
+    mediaAlt:
+      "Кабінет продукту — охоплення сканування, висновки за критичністю та статус звіту",
+  },
+
+  report: {
+    eyebrow: "Результат",
+    heading: "Звіт — це і є продукт.",
+    body: "Ви отримуєте не стіну сирих даних, а охайну Excel-специфікацію — той самий структурований формат, з яким уже працюють ваші розробники, — де кожну проблему категоризовано, проранжовано й готово до виправлення.",
+    bullets: [
+      "Категоризовані таблиці виправлень, згруповані за типом проблеми.",
+      "Ранжування за критичністю — найважливіше нагорі.",
+      "Готово для розробників: кожен рядок — це конкретна зміна, яку можна впровадити.",
+    ],
+    mediaAlt:
+      "Знімок Excel-звіту — категоризовані таблиці виправлень, проранжовані за критичністю",
+  },
+
+  pipeline: {
+    eyebrow: "Як це працює",
+    heading: "П’ять етапів, повністю автоматизовано.",
+    cta: { label: "Переглянути весь процес", href: "/how-it-works" },
+    steps: [
+      {
+        key: "crawl",
+        title: "Сканування",
+        description:
+          "Ми отримуємо кожну сторінку, посилання, зображення та meta-теги вашого сайту.",
+      },
+      {
+        key: "enrich",
+        title: "Збагачення",
+        description:
+          "Будуємо граф посилань, відстежуємо редиректи й зв’язки canonical.",
+      },
+      {
+        key: "analyze",
+        title: "Аналіз",
+        description: "~31 перевірка виявляє проблеми й ранжує їх за критичністю.",
+      },
+      {
+        key: "performance",
+        title: "Швидкодія",
+        description: "Core Web Vitals отримуємо через Google PageSpeed.",
+      },
+      {
+        key: "report",
+        title: "Звіт",
+        description: "Охайна Excel-специфікація, готова для ваших розробників.",
+      },
+    ],
+  },
+
+  ctaBand: {
+    headline: "Отримайте безкоштовний аудит свого сайту.",
+    body: "Дізнайтеся, що саме стримує ваше технічне SEO, — і передайте команді звіт, з яким вона зможе працювати.",
+    cta: { label: "Безкоштовний аудит", href: "/contact" },
+  },
+};
+
+const BY_LOCALE: Record<Locale, Home> = {
+  en: homeEn,
+  uk: mergeCopy(homeEn, homeUk),
+};
+
+export function getHome(locale: Locale): Home {
+  return BY_LOCALE[locale];
+}
+
+export const home = homeEn;

@@ -466,3 +466,74 @@ export function resolveRuleInfo(
 
 /** Every catalogued rule, in catalogue order — handy for the filter dropdown. */
 export const ALL_RULES: RuleInfo[] = Object.values(RULE_CATALOG);
+
+// ── Localization ─────────────────────────────────────────────────────────────
+// English (above) is the source of truth for `id`/`severity` (the join key and
+// the severity stamp). A Ukrainian overlay supplies translated text; any rule
+// or field missing from it falls back to English, so a backend-added rule never
+// renders broken.
+import type { Locale } from "@/lib/i18n/config";
+import {
+  RULE_CATALOG_UK,
+  FAMILY_UK,
+  UNKNOWN_RULE_UK,
+} from "@/lib/rule-catalog-uk";
+
+/** Build a locale-correct catalogue (EN base, UK text merged over it). */
+function buildCatalog(locale: Locale): Record<string, RuleInfo> {
+  if (locale === "en") return RULE_CATALOG;
+  const out: Record<string, RuleInfo> = {};
+  for (const [id, en] of Object.entries(RULE_CATALOG)) {
+    const uk = RULE_CATALOG_UK[id];
+    out[id] = uk ? { ...en, ...uk } : en;
+  }
+  return out;
+}
+
+const CATALOG_BY_LOCALE: Record<Locale, Record<string, RuleInfo>> = {
+  en: RULE_CATALOG,
+  uk: buildCatalog("uk"),
+};
+
+const ALL_RULES_BY_LOCALE: Record<Locale, RuleInfo[]> = {
+  en: Object.values(CATALOG_BY_LOCALE.en),
+  uk: Object.values(CATALOG_BY_LOCALE.uk),
+};
+
+/** Locale-correct catalogue map. */
+export function getRuleCatalog(locale: Locale): Record<string, RuleInfo> {
+  return CATALOG_BY_LOCALE[locale] ?? RULE_CATALOG;
+}
+
+/** Locale-correct list of all rules (for the filter dropdown). */
+export function getAllRules(locale: Locale): RuleInfo[] {
+  return ALL_RULES_BY_LOCALE[locale] ?? ALL_RULES;
+}
+
+/** Locale-aware single lookup (no fallback to a generated entry). */
+export function getRuleInfoLocalized(
+  locale: Locale,
+  ruleId: string,
+): RuleInfo | undefined {
+  return getRuleCatalog(locale)[ruleId];
+}
+
+/** Locale-aware always-renderable resolver (mirrors {@link resolveRuleInfo}). */
+export function resolveRuleInfoLocalized(
+  locale: Locale,
+  ruleId: string,
+  severity: Severity,
+): RuleInfo {
+  const known = getRuleCatalog(locale)[ruleId];
+  if (known) return known;
+  if (locale === "en") return resolveRuleInfo(ruleId, severity);
+  return {
+    id: ruleId,
+    title: humanizeRuleId(ruleId),
+    family: FAMILY_UK.Other,
+    severity,
+    whatItFlags: UNKNOWN_RULE_UK.whatItFlags,
+    whyItMatters: UNKNOWN_RULE_UK.whyItMatters,
+    howToFix: UNKNOWN_RULE_UK.howToFix,
+  };
+}

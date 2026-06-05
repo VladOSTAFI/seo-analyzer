@@ -2,6 +2,9 @@ import { Loader2, CheckCircle2, AlertTriangle } from "lucide-react";
 
 import type { AuditStatus } from "@/lib/api/types";
 import { isTerminal } from "@/lib/api/types";
+import type { Locale } from "@/lib/i18n/config";
+import { DEFAULT_LOCALE } from "@/lib/i18n/config";
+import { getDashboard } from "@/lib/copy/dashboard";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 
@@ -12,8 +15,7 @@ import { Badge } from "@/components/ui/badge";
  *   - running   → primary-tinted with a spinning loader (any non-terminal
  *                 status: created/crawling/enriching/analyzing/reporting).
  *
- * The status string is shown verbatim (capitalised) so the live pipeline stage
- * is visible while polling.
+ * The status text is localized via `locale` (defaults to English).
  */
 const KIND_CLASS = {
   done: "bg-emerald-500/15 text-emerald-300 border-emerald-500/25",
@@ -23,24 +25,27 @@ const KIND_CLASS = {
 
 export function AuditStatusBadge({
   status,
+  locale = DEFAULT_LOCALE,
   className,
 }: {
   status: AuditStatus;
+  locale?: Locale;
   className?: string;
 }) {
   const kind =
     status === "done" ? "done" : status === "failed" ? "failed" : "running";
   const running = !isTerminal(status);
+  const label = getDashboard(locale).status[status] ?? status;
 
   const Icon = kind === "done" ? CheckCircle2 : kind === "failed" ? AlertTriangle : Loader2;
 
   return (
     <Badge
       variant="outline"
-      className={cn("gap-1.5 font-medium capitalize", KIND_CLASS[kind], className)}
+      className={cn("gap-1.5 font-medium", KIND_CLASS[kind], className)}
     >
       <Icon aria-hidden className={cn("size-3", running && "animate-spin")} />
-      {status}
+      {label}
     </Badge>
   );
 }

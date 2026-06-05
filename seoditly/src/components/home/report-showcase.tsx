@@ -1,16 +1,17 @@
 import { Check } from "lucide-react";
 
-import { home } from "@/lib/copy/home";
+import { getRequestLocale } from "@/lib/i18n/server";
+import { getHome } from "@/lib/copy/home";
 import { Container } from "@/components/primitives/container";
 import { MediaFrame } from "@/components/primitives/media-frame";
-
-const { report } = home;
 
 /**
  * The report framed as the deliverable. Two columns that stack on mobile:
  * copy + bullets on the left, the report `MediaFrame` placeholder on the right.
  */
-export function ReportShowcase() {
+export async function ReportShowcase() {
+  const { report } = getHome(await getRequestLocale());
+
   return (
     <section className="py-20 md:py-28">
       <Container>

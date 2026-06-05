@@ -1,11 +1,12 @@
-import { home } from "@/lib/copy/home";
+import { getRequestLocale } from "@/lib/i18n/server";
+import { getHome } from "@/lib/copy/home";
 import { Container } from "@/components/primitives/container";
 import { StatCard } from "@/components/primitives/stat-card";
 
-const { stats } = home;
-
 /** Three proof-points in a 1-col (mobile) → 3-col (md) grid. */
-export function StatRow() {
+export async function StatRow() {
+  const { stats } = getHome(await getRequestLocale());
+
   return (
     <section className="pb-8 md:pb-12">
       <Container>

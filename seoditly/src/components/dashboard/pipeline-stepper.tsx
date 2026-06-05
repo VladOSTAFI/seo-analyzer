@@ -1,27 +1,29 @@
 import { Check, X } from "lucide-react";
 
 import type { AuditStatus } from "@/lib/api/types";
+import type { Locale } from "@/lib/i18n/config";
+import { DEFAULT_LOCALE } from "@/lib/i18n/config";
+import { getDashboard } from "@/lib/copy/dashboard";
 import { cn } from "@/lib/utils";
 
 /**
- * Horizontal pipeline stepper, ported from `frontend/src/AuditDetails.tsx`'s
- * `Pipeline`. Maps the backend's `AuditStatus` onto four ordered stages and
- * marks each done / active / failed:
+ * Horizontal pipeline stepper. Maps the backend's `AuditStatus` onto four
+ * ordered stages and marks each done / active / failed.
+ *
+ * The stage `key` (`crawl`/`enrich`/`analyze`/`report`) is the stable English
+ * identifier the backend also uses for `failedStage`, so matching stays on the
+ * key; only the DISPLAY label is localized via `locale` (defaults to English).
  *
  *   - `done`   → every stage complete.
  *   - active   → the stage matching the current running status (pulsing dot).
- *   - earlier  → stages before the active one are done.
  *   - `failed` → the stage named by `failedStage` is marked failed; earlier
  *                stages stay done.
- *
- * `created` (pre-crawl) leaves all stages pending. Pure presentation — the
- * polling that advances `status` lives in the client wrapper.
  */
-const STAGES: { status: AuditStatus; label: string }[] = [
-  { status: "crawling", label: "crawl" },
-  { status: "enriching", label: "enrich" },
-  { status: "analyzing", label: "analyze" },
-  { status: "reporting", label: "report" },
+const STAGES: { status: AuditStatus; key: "crawl" | "enrich" | "analyze" | "report" }[] = [
+  { status: "crawling", key: "crawl" },
+  { status: "enriching", key: "enrich" },
+  { status: "analyzing", key: "analyze" },
+  { status: "reporting", key: "report" },
 ];
 
 type StepState = "done" | "active" | "failed" | "pending";
@@ -30,20 +32,19 @@ function stepState(
   index: number,
   status: AuditStatus,
   failedStage: string | null,
-  label: string,
+  key: string,
 ): StepState {
   if (status === "done") return "done";
   if (status === "failed") {
-    if (failedStage === label) return "failed";
-    // Stages before the failed one ran; the rest stay pending.
-    const failedIdx = STAGES.findIndex((s) => s.label === failedStage);
+    if (failedStage === key) return "failed";
+    const failedIdx = STAGES.findIndex((s) => s.key === failedStage);
     if (failedIdx === -1) return "pending";
     return index < failedIdx ? "done" : "pending";
   }
   if (status === "created") return "pending";
 
   const currentIdx = STAGES.findIndex((s) => s.status === status);
-  if (currentIdx === -1) return "done"; // unknown/late status → treat as done
+  if (currentIdx === -1) return "done";
   if (index < currentIdx) return "done";
   if (index === currentIdx) return "active";
   return "pending";
@@ -52,22 +53,27 @@ function stepState(
 export function PipelineStepper({
   status,
   failedStage,
+  locale = DEFAULT_LOCALE,
   className,
 }: {
   status: AuditStatus;
   failedStage: string | null;
+  locale?: Locale;
   className?: string;
 }) {
+  const t = getDashboard(locale);
+
   return (
     <ol
-      aria-label="Audit pipeline"
+      aria-label={t.detail.auditPipelineLabel}
       className={cn(
         "flex flex-wrap items-center gap-x-2 gap-y-3 sm:gap-x-3",
         className,
       )}
     >
       {STAGES.map((stage, i) => {
-        const state = stepState(i, status, failedStage, stage.label);
+        const state = stepState(i, status, failedStage, stage.key);
+        const label = t.pipelineStages[stage.key];
         return (
           <li key={stage.status} className="flex items-center gap-2 sm:gap-3">
             <span className="flex items-center gap-2">
@@ -94,14 +100,14 @@ export function PipelineStepper({
               </span>
               <span
                 className={cn(
-                  "text-sm capitalize",
+                  "text-sm",
                   state === "active" && "font-medium text-foreground",
                   state === "done" && "text-foreground",
                   state === "failed" && "font-medium text-destructive",
                   state === "pending" && "text-muted-foreground",
                 )}
               >
-                {stage.label}
+                {label}
               </span>
             </span>
             {i < STAGES.length - 1 && (

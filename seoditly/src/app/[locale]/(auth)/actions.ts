@@ -5,31 +5,34 @@ import { redirect } from "next/navigation";
 import { backendUrl } from "@/lib/api/backend";
 import { setSession, clearSession, getAccessToken } from "@/lib/auth/session";
 import {
-  loginSchema,
-  registerSchema,
+  getLoginSchema,
+  getRegisterSchema,
   type AuthFieldErrors,
 } from "@/lib/auth/validation";
-import type { AuthFormState } from "@/app/(auth)/state";
+import type { AuthFormState } from "@/app/[locale]/(auth)/state";
 import { DASHBOARD_HREF, LOGIN_HREF } from "@/lib/constants";
+import { DEFAULT_LOCALE, isLocale, localeHref, type Locale } from "@/lib/i18n/config";
+import { getAuth } from "@/lib/copy/auth";
 import type { IssuedTokens } from "@/lib/api/types";
 
 /**
  * Server Actions backing the auth pages. They call the backend's first-party
  * `/auth/*` endpoints, store the issued tokens in httpOnly cookies via
- * `setSession`, and redirect to the dashboard. Field/credential errors surface
- * as inline `AuthFormState` (never thrown), so the forms degrade gracefully.
+ * `setSession`, and redirect to the LOCALE-CORRECT dashboard. Field/credential
+ * errors surface as inline `AuthFormState` (never thrown), localized to the
+ * caller's language.
  *
  * `useActionState` signature: `(prevState, formData) => Promise<state>`.
  * Tokens are NEVER returned to the client — only `setSession` (httpOnly) sees
- * them, and nothing is logged.
+ * them, and nothing is logged. The active locale is read from a hidden `locale`
+ * form field (the form lives on a `[locale]` page); an absent/invalid value
+ * falls back to English.
  */
 
-const BAD_CREDENTIALS = "Incorrect email or password.";
-const DUPLICATE_EMAIL = "An account with this email already exists.";
-const TOO_MANY_ATTEMPTS =
-  "Too many attempts. Please wait a moment and try again.";
-const GENERAL_ERROR = "Something went wrong. Please try again.";
-const UNREACHABLE = "Couldn't reach the server. Please try again shortly.";
+function localeFromForm(formData: FormData): Locale {
+  const raw = formData.get("locale");
+  return typeof raw === "string" && isLocale(raw) ? raw : DEFAULT_LOCALE;
+}
 
 /** POST to a `/auth/*` endpoint, returning the issued tokens or a status code. */
 async function postAuth(
@@ -77,7 +80,10 @@ export async function loginAction(
   _prevState: AuthFormState,
   formData: FormData,
 ): Promise<AuthFormState> {
-  const parsed = loginSchema.safeParse({
+  const locale = localeFromForm(formData);
+  const errors = getAuth(locale).errors;
+
+  const parsed = getLoginSchema(locale).safeParse({
     email: formData.get("email"),
     password: formData.get("password"),
   });
@@ -93,26 +99,29 @@ export async function loginAction(
   const result = await postAuth("/auth/login", parsed.data);
   if (!result.ok) {
     if (result.status === 401) {
-      return { status: "error", formError: BAD_CREDENTIALS };
+      return { status: "error", formError: errors.badCredentials };
     }
     if (result.status === 429) {
-      return { status: "error", formError: TOO_MANY_ATTEMPTS };
+      return { status: "error", formError: errors.tooManyAttempts };
     }
     if (result.status === 0) {
-      return { status: "error", formError: UNREACHABLE };
+      return { status: "error", formError: errors.unreachable };
     }
-    return { status: "error", formError: GENERAL_ERROR };
+    return { status: "error", formError: errors.general };
   }
 
   await setSession(result.tokens);
-  redirect(DASHBOARD_HREF);
+  redirect(localeHref(DASHBOARD_HREF, locale));
 }
 
 export async function registerAction(
   _prevState: AuthFormState,
   formData: FormData,
 ): Promise<AuthFormState> {
-  const parsed = registerSchema.safeParse({
+  const locale = localeFromForm(formData);
+  const errors = getAuth(locale).errors;
+
+  const parsed = getRegisterSchema(locale).safeParse({
     email: formData.get("email"),
     password: formData.get("password"),
   });
@@ -130,29 +139,30 @@ export async function registerAction(
     if (result.status === 409) {
       return {
         status: "error",
-        fieldErrors: { email: [DUPLICATE_EMAIL] },
+        fieldErrors: { email: [errors.duplicateEmail] },
       };
     }
     if (result.status === 429) {
-      return { status: "error", formError: TOO_MANY_ATTEMPTS };
+      return { status: "error", formError: errors.tooManyAttempts };
     }
     if (result.status === 0) {
-      return { status: "error", formError: UNREACHABLE };
+      return { status: "error", formError: errors.unreachable };
     }
-    return { status: "error", formError: GENERAL_ERROR };
+    return { status: "error", formError: errors.general };
   }
 
   await setSession(result.tokens);
-  redirect(DASHBOARD_HREF);
+  redirect(localeHref(DASHBOARD_HREF, locale));
 }
 
 /**
  * Logout Server Action: revoke refresh tokens server-side (`POST /auth/logout`,
- * Bearer), then clear both cookies and redirect to login. Best-effort on the
- * network call — we always clear local cookies so the user is logged out even
- * if the backend is unreachable.
+ * Bearer), then clear both cookies and redirect to the LOCALE-CORRECT login.
+ * Best-effort on the network call — we always clear local cookies. The active
+ * locale comes from a hidden `locale` field in the logout form.
  */
-export async function logoutAction(): Promise<void> {
+export async function logoutAction(formData: FormData): Promise<void> {
+  const locale = localeFromForm(formData);
   const accessToken = await getAccessToken();
   if (accessToken) {
     try {
@@ -167,5 +177,5 @@ export async function logoutAction(): Promise<void> {
   }
 
   await clearSession();
-  redirect(LOGIN_HREF);
+  redirect(localeHref(LOGIN_HREF, locale));
 }

@@ -9,11 +9,11 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-import { home } from "@/lib/copy/home";
+import { getRequestLocale } from "@/lib/i18n/server";
+import { localeHref } from "@/lib/i18n/config";
+import { getHome } from "@/lib/copy/home";
 import { Section } from "@/components/primitives/section";
 import { Card, CardContent } from "@/components/ui/card";
-
-const { pipeline } = home;
 
 /** Maps each copy step `key` to its icon — keeps icons out of the copy file. */
 const STEP_ICONS: Record<string, LucideIcon> = {
@@ -29,7 +29,10 @@ const STEP_ICONS: Record<string, LucideIcon> = {
  * Performance → Report), each with a lucide icon. Links out to the full
  * `/how-it-works` walkthrough.
  */
-export function PipelineTeaser() {
+export async function PipelineTeaser() {
+  const locale = await getRequestLocale();
+  const { pipeline } = getHome(locale);
+
   return (
     <Section eyebrow={pipeline.eyebrow} heading={pipeline.heading}>
       <ol className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
@@ -64,7 +67,7 @@ export function PipelineTeaser() {
 
       <div className="mt-10">
         <Link
-          href={pipeline.cta.href}
+          href={localeHref(pipeline.cta.href, locale)}
           className="group inline-flex items-center gap-2 text-sm font-medium text-primary transition-colors hover:text-primary/80"
         >
           {pipeline.cta.label}

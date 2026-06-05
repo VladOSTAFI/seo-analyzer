@@ -3,7 +3,10 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { getAudit, listFindings, ApiError } from "@/lib/api/client";
-import { PRODUCT_NAME, AUDITS_HREF } from "@/lib/constants";
+import { AUDITS_HREF } from "@/lib/constants";
+import { DEFAULT_LOCALE, isLocale, localeHref } from "@/lib/i18n/config";
+import { getRequestLocale } from "@/lib/i18n/server";
+import { getDashboard, fmt } from "@/lib/copy/dashboard";
 import { stripScheme } from "@/lib/format";
 import { SEVERITIES, DEFAULT_LIMIT } from "@/lib/api/types";
 import type { Severity, Paginated, FindingDto } from "@/lib/api/types";
@@ -11,20 +14,22 @@ import { Button } from "@/components/ui/button";
 import { FindingsFilters } from "@/components/dashboard/findings-filters";
 import { FindingsGroups } from "@/components/dashboard/findings-groups";
 
-export const metadata: Metadata = {
-  title: "Findings",
-  description: `Audit findings on ${PRODUCT_NAME}.`,
-};
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ locale: string; id: string }>;
+}): Promise<Metadata> {
+  const { locale: raw } = await params;
+  const locale = isLocale(raw) ? raw : DEFAULT_LOCALE;
+  const { meta } = getDashboard(locale);
+  return { title: meta.findingsTitle, description: meta.findingsDescription };
+}
 
 /**
  * Findings view (Phase 5). Server Component that awaits `params` + `searchParams`
  * (both Promises in Next 16), then fetches `GET /audits/:id/findings` through
- * the Bearer client with the `severity` + `ruleId` filters and pagination read
- * from the URL.
- *
- * Filters live in the URL (set by `FindingsFilters`) so the view is shareable
- * and re-fetches server-side on change. A `404` on the parent audit renders the
- * shared not-found state (missing-or-unowned, no enumeration).
+ * the Bearer client with the `severity` + `ruleId` filters and pagination from
+ * the URL. Filters live in the URL so the view is shareable.
  *
  * `force-dynamic` keeps this off the build-time prerender path.
  */
@@ -45,17 +50,18 @@ export default async function FindingsPage({
   params,
   searchParams,
 }: {
-  params: Promise<{ id: string }>;
+  params: Promise<{ locale: string; id: string }>;
   searchParams: Promise<{ severity?: string; ruleId?: string; page?: string }>;
 }) {
+  const locale = await getRequestLocale();
+  const t = getDashboard(locale);
   const [{ id }, sp] = await Promise.all([params, searchParams]);
   const severity = isSeverity(sp.severity) ? sp.severity : undefined;
   const ruleId = sp.ruleId?.trim() || undefined;
   const page = parsePage(sp.page);
   const offset = (page - 1) * PAGE_SIZE;
 
-  // Confirm ownership/existence + get the audit URL for the header. A 404 here
-  // means missing-or-unowned → shared not-found state.
+  // Confirm ownership/existence + get the audit URL for the header.
   let auditUrl: string;
   try {
     const audit = await getAudit(id);
@@ -65,16 +71,16 @@ export default async function FindingsPage({
       return (
         <div className="space-y-6">
           <Link
-            href={`${AUDITS_HREF}/${id}`}
+            href={localeHref(`${AUDITS_HREF}/${id}`, locale)}
             className="text-xs font-medium text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
           >
-            ← Back to audit
+            {t.findings.backToAudit}
           </Link>
           <div
             role="alert"
             className="rounded-2xl border border-destructive/30 bg-destructive/5 px-6 py-10 text-center text-sm text-destructive"
           >
-            Couldn&apos;t reach the backend. Please try again shortly.
+            {t.findings.unreachable}
           </div>
         </div>
       );
@@ -92,7 +98,7 @@ export default async function FindingsPage({
       offset,
     });
   } catch {
-    error = "Couldn't load findings right now. Please try again shortly.";
+    error = t.findings.errorGeneral;
   }
 
   const items = result?.items ?? [];
@@ -101,34 +107,38 @@ export default async function FindingsPage({
 
   // Build a query string that preserves the active filters across pages.
   function pageHref(p: number): string {
-    const params = new URLSearchParams();
-    if (severity) params.set("severity", severity);
-    if (ruleId) params.set("ruleId", ruleId);
-    if (p > 1) params.set("page", String(p));
-    const qs = params.toString();
-    return qs
-      ? `${AUDITS_HREF}/${id}/findings?${qs}`
-      : `${AUDITS_HREF}/${id}/findings`;
+    const qsParams = new URLSearchParams();
+    if (severity) qsParams.set("severity", severity);
+    if (ruleId) qsParams.set("ruleId", ruleId);
+    if (p > 1) qsParams.set("page", String(p));
+    const qs = qsParams.toString();
+    const base = `${AUDITS_HREF}/${id}/findings`;
+    return localeHref(qs ? `${base}?${qs}` : base, locale);
   }
 
   return (
     <div className="space-y-6">
       <header className="space-y-2">
         <Link
-          href={`${AUDITS_HREF}/${id}`}
+          href={localeHref(`${AUDITS_HREF}/${id}`, locale)}
           className="text-xs font-medium text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
         >
-          ← Back to audit
+          {t.findings.backToAudit}
         </Link>
         <h1 className="text-2xl font-semibold tracking-tight text-foreground md:text-3xl">
-          Findings
+          {t.findings.heading}
         </h1>
         <p className="truncate font-mono text-sm text-muted-foreground" title={auditUrl}>
           {stripScheme(auditUrl)}
         </p>
       </header>
 
-      <FindingsFilters severity={severity} ruleId={ruleId} />
+      <FindingsFilters
+        severity={severity}
+        ruleId={ruleId}
+        locale={locale}
+        strings={t.findings}
+      />
 
       {error ? (
         <div
@@ -139,15 +149,20 @@ export default async function FindingsPage({
         </div>
       ) : (
         <>
-          <FindingsGroups items={items} total={total} />
+          <FindingsGroups
+            items={items}
+            total={total}
+            locale={locale}
+            strings={t.findings}
+          />
 
           {totalPages > 1 && (
             <nav
-              aria-label="Pagination"
+              aria-label={t.pagination.label}
               className="flex items-center justify-between text-sm"
             >
               <span className="text-muted-foreground">
-                Page {page} of {totalPages} · {total} total
+                {fmt(t.pagination.pageOf, { page, totalPages, total })}
               </span>
               <div className="flex gap-2">
                 <Button
@@ -158,9 +173,9 @@ export default async function FindingsPage({
                   className="h-9"
                 >
                   {page > 1 ? (
-                    <Link href={pageHref(page - 1)}>Previous</Link>
+                    <Link href={pageHref(page - 1)}>{t.pagination.previous}</Link>
                   ) : (
-                    <span>Previous</span>
+                    <span>{t.pagination.previous}</span>
                   )}
                 </Button>
                 <Button
@@ -171,9 +186,9 @@ export default async function FindingsPage({
                   className="h-9"
                 >
                   {page < totalPages ? (
-                    <Link href={pageHref(page + 1)}>Next</Link>
+                    <Link href={pageHref(page + 1)}>{t.pagination.next}</Link>
                   ) : (
-                    <span>Next</span>
+                    <span>{t.pagination.next}</span>
                   )}
                 </Button>
               </div>

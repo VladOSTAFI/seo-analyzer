@@ -5,7 +5,8 @@ import { LayoutDashboard, ListChecks, LogOut, ChevronDown } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { DASHBOARD_HREF, AUDITS_HREF } from "@/lib/constants";
-import { logoutAction } from "@/app/(auth)/actions";
+import { localeHref, type Locale } from "@/lib/i18n/config";
+import { logoutAction } from "@/app/[locale]/(auth)/actions";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -21,13 +22,24 @@ import {
  * email and a "Sign out" item that invokes the logout Server Action (revokes
  * refresh tokens server-side, clears cookies, redirects to /login).
  *
- * `fullWidth` stacks the controls for the mobile menu; desktop renders inline.
+ * Locale-aware: hrefs are prefixed for `locale`; labels are passed in from the
+ * server (already localized). `fullWidth` stacks the controls for mobile.
  */
 export function UserMenu({
   email,
+  locale,
+  labels,
   fullWidth = false,
 }: {
   email: string;
+  locale: Locale;
+  labels: {
+    dashboard: string;
+    audits: string;
+    accountMenu: string;
+    signedInAs: string;
+    signOut: string;
+  };
   fullWidth?: boolean;
 }) {
   return (
@@ -42,9 +54,9 @@ export function UserMenu({
         variant="outline"
         className={cn("h-11 rounded-lg px-4 text-sm font-medium", fullWidth && "w-full")}
       >
-        <Link href={DASHBOARD_HREF}>
+        <Link href={localeHref(DASHBOARD_HREF, locale)}>
           <LayoutDashboard aria-hidden />
-          Dashboard
+          {labels.dashboard}
         </Link>
       </Button>
 
@@ -56,29 +68,30 @@ export function UserMenu({
               "h-11 max-w-[12rem] rounded-lg px-3 text-sm font-medium",
               fullWidth && "w-full max-w-none justify-between",
             )}
-            aria-label="Account menu"
+            aria-label={labels.accountMenu}
           >
             <span className="truncate text-muted-foreground">{email}</span>
             <ChevronDown aria-hidden className="opacity-70" />
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="min-w-56">
-          <DropdownMenuLabel>Signed in as</DropdownMenuLabel>
+          <DropdownMenuLabel>{labels.signedInAs}</DropdownMenuLabel>
           <div className="truncate px-1.5 pb-1 text-sm text-foreground">
             {email}
           </div>
           <DropdownMenuItem asChild>
-            <Link href={AUDITS_HREF}>
+            <Link href={localeHref(AUDITS_HREF, locale)}>
               <ListChecks aria-hidden />
-              Audits
+              {labels.audits}
             </Link>
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <form action={logoutAction}>
+            <input type="hidden" name="locale" value={locale} />
             <DropdownMenuItem asChild variant="destructive">
               <button type="submit" className="w-full">
                 <LogOut aria-hidden />
-                Sign out
+                {labels.signOut}
               </button>
             </DropdownMenuItem>
           </form>

@@ -1,11 +1,14 @@
-import { home } from "@/lib/copy/home";
+import { getRequestLocale } from "@/lib/i18n/server";
+import { localeHref } from "@/lib/i18n/config";
+import { getHome } from "@/lib/copy/home";
 import { Container } from "@/components/primitives/container";
 import { CTAButton } from "@/components/primitives/cta-button";
 
-const { ctaBand } = home;
-
 /** Violet-tinted closing band: headline + primary CTA to `/contact`. */
-export function CTABand() {
+export async function CTABand() {
+  const locale = await getRequestLocale();
+  const { ctaBand } = getHome(locale);
+
   return (
     <section className="py-20 md:py-28">
       <Container>
@@ -23,7 +26,7 @@ export function CTABand() {
               {ctaBand.body}
             </p>
             <div className="mt-8 flex justify-center">
-              <CTAButton href={ctaBand.cta.href} variant="primary">
+              <CTAButton href={localeHref(ctaBand.cta.href, locale)} variant="primary">
                 {ctaBand.cta.label}
               </CTAButton>
             </div>

@@ -1,15 +1,16 @@
-import { home } from "@/lib/copy/home";
+import { getRequestLocale } from "@/lib/i18n/server";
+import { getHome } from "@/lib/copy/home";
 import { Section } from "@/components/primitives/section";
 import { MediaFrame } from "@/components/primitives/media-frame";
-
-const { platform } = home;
 
 /**
  * The platform shot — a 16:9 violet-ringed `MediaFrame` showing the live
  * product dashboard (`public/media/dashboard.png`): crawl coverage, findings
  * by severity, and report status at a glance.
  */
-export function PlatformVisual() {
+export async function PlatformVisual() {
+  const { platform } = getHome(await getRequestLocale());
+
   return (
     <Section eyebrow={platform.eyebrow} heading={platform.heading}>
       <div className="relative">

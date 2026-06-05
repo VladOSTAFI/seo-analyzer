@@ -1,21 +1,17 @@
 import { PRODUCT_NAME } from "@/lib/constants";
+import type { Locale } from "@/lib/i18n/config";
+import { mergeCopy, type DeepPartial } from "@/lib/i18n/merge";
 
 /**
- * All user-facing copy for the `/how-it-works` page. Same pattern as
- * {@link home}: a typed `const ... as const` object imported by
- * `components/how-it-works/*`, so wording iterates without touching JSX.
+ * Copy for `/how-it-works`. `howItWorksEn` is the typed English source of truth
+ * (and fallback); `howItWorksUk` overrides it. `getHowItWorks(locale)` deep-
+ * merges UK over EN. Components call the getter; `howItWorks` stays English.
  *
- * Expected assets (drop into `public/media/` to swap placeholders / wire the
- * real download with zero code change):
- *   - `public/media/report.png`          — screenshot of the Excel report tables.
- *   - `public/media/sample-report.xlsx`  — downloadable sample of the deliverable.
- *
- * The sample-report download link points at the path above regardless of
- * whether the binary is present yet; ship the real `.xlsx` from a covecta.io
- * run when convenient and the link starts serving it automatically.
+ * Expected assets in `public/media/`:
+ *   - `report.png`         — screenshot of the Excel report tables.
+ *   - `sample-report.xlsx` — downloadable sample of the deliverable.
  */
-export const howItWorks = {
-  /** Page-level metadata (composed with the layout's `%s · seoditly` template). */
+export const howItWorksEn = {
   meta: {
     title: "How it works",
     description:
@@ -77,18 +73,16 @@ export const howItWorks = {
   report: {
     eyebrow: "The deliverable",
     heading: "What the report looks like.",
-    body: "You do not get a login and a learning curve. You get a styled Excel spec — the same ТЗ format your developers already work from — with every issue categorized, ranked by severity, and ready to action.",
+    body: "You do not get a login and a learning curve. You get a styled Excel spec — the same structured format your developers already work from — with every issue categorized, ranked by severity, and ready to action.",
     bullets: [
       "Categorized fix tables, grouped by issue type.",
       "Severity ranking so the highest-impact work is up top.",
       "Developer-ready rows that map to concrete, shippable changes.",
     ],
-    /** Accessible description for the report MediaFrame placeholder. */
     mediaAlt:
       "Excel report screenshot — categorized fix tables ranked by severity",
     download: {
       label: "Download a sample report",
-      /** Served from `public/media/`; the binary may land later (see file header). */
       href: "/media/sample-report.xlsx",
       note: "Sample .xlsx · the same format your audit returns",
     },
@@ -126,4 +120,123 @@ export const howItWorks = {
   },
 } as const;
 
-export type HowItWorks = typeof howItWorks;
+export type HowItWorks = typeof howItWorksEn;
+
+const howItWorksUk: DeepPartial<HowItWorks> = {
+  meta: {
+    title: "Як це працює",
+    description:
+      `Подивіться, як саме ${PRODUCT_NAME} проводить аудит вашого сайту — від ` +
+      "сканування до Excel-звіту з пріоритетами за критичністю — і що отримують ваші розробники.",
+  },
+
+  intro: {
+    badge: "Як це працює",
+    headline: "Від одного URL до звіту, з яким працюватимуть ваші розробники.",
+    subhead:
+      "Аудит сканує весь ваш сайт, виконує всі технічні перевірки, оцінює Core Web Vitals і зводить усе в єдину пріоритезовану Excel-специфікацію — без панелей, які треба вивчати, і без сирих даних, у яких треба копатися.",
+  },
+
+  pipeline: {
+    eyebrow: "Процес",
+    heading: "П’ять етапів, повністю автоматизовано.",
+    body: "Ви вказуєте нам URL. Решту ми беремо на себе й повертаємо результат — ось що відбувається між цими кроками.",
+    stages: [
+      {
+        key: "crawl",
+        title: "Сканування",
+        description:
+          "Ми отримуємо кожну сторінку, посилання, зображення та meta-тег вашого сайту, переходячи внутрішніми посиланнями так, як це робить пошуковик.",
+      },
+      {
+        key: "enrich",
+        title: "Збагачення",
+        description:
+          "Будуємо граф посилань, розкриваємо редиректи й пов’язуємо зв’язки canonical, щоб кожен URL розглядався в контексті, а не окремо.",
+      },
+      {
+        key: "analyze",
+        title: "Аналіз",
+        description:
+          "Близько 31 технічної перевірки проходять по всьому скануванню, виявляючи проблеми й ранжуючи кожну за критичністю, щоб найважливіше було нагорі.",
+      },
+      {
+        key: "performance",
+        title: "Швидкодія",
+        description:
+          "Ми отримуємо реальні Core Web Vitals — LCP, CLS та INP — для ключових сторінок через Google PageSpeed і додаємо їх до висновків.",
+      },
+      {
+        key: "report",
+        title: "Звіт",
+        description:
+          "Усе зводиться в єдину охайну Excel-специфікацію: категоризовані таблиці виправлень, ранжування за критичністю й рядки, які розробники можуть одразу впроваджувати.",
+      },
+    ],
+  },
+
+  checks: {
+    eyebrow: "Що ми перевіряємо",
+    heading: "~31 технічна перевірка, згрупована за шістьма напрямами.",
+    body: "Кожна категорія відповідає розділу у вашому звіті. Ось обсяг того, що охоплює кожен аудит — без стіни деталей.",
+  },
+
+  report: {
+    eyebrow: "Результат",
+    heading: "Який вигляд має звіт.",
+    body: "Жодного логіну й кривої навчання. Ви отримуєте охайну Excel-специфікацію — той самий структурований формат, з яким уже працюють ваші розробники, — де кожну проблему категоризовано, проранжовано за критичністю й готово до виправлення.",
+    bullets: [
+      "Категоризовані таблиці виправлень, згруповані за типом проблеми.",
+      "Ранжування за критичністю — найважливіше нагорі.",
+      "Готові для розробників рядки, що відповідають конкретним змінам.",
+    ],
+    mediaAlt:
+      "Знімок Excel-звіту — категоризовані таблиці виправлень, проранжовані за критичністю",
+    download: {
+      label: "Завантажити приклад звіту",
+      note: "Приклад .xlsx · той самий формат, який повертає ваш аудит",
+    },
+  },
+
+  expectations: {
+    eyebrow: "Чого очікувати",
+    heading: "Чіткі очікування, жодних сюрпризів.",
+    items: [
+      {
+        key: "turnaround",
+        title: "Швидкий результат",
+        description:
+          "Більшість аудитів завершуються протягом кількох годин після надсилання URL — для великих сайтів трохи довше.",
+      },
+      {
+        key: "format",
+        title: "Файл Excel",
+        description:
+          "Результат — єдина .xlsx-специфікація: не треба заходити в портал чи встановлювати спеціальний переглядач.",
+      },
+      {
+        key: "severity",
+        title: "Пріоритети за критичністю",
+        description:
+          "Кожен висновок проранжовано від критичного до інформаційного, тож команда точно знає, що виправляти першим.",
+      },
+    ],
+  },
+
+  cta: {
+    headline: "Готові побачити, що стримує ваше SEO?",
+    body: "Надішліть нам свій URL — ми проведемо безкоштовний аудит, і ви отримаєте той самий звіт із пріоритетами за критичністю, з яким ваші розробники зможуть працювати вже сьогодні.",
+    primary: { label: "Безкоштовний аудит", href: "/contact" },
+  },
+};
+
+const BY_LOCALE: Record<Locale, HowItWorks> = {
+  en: howItWorksEn,
+  uk: mergeCopy(howItWorksEn, howItWorksUk),
+};
+
+export function getHowItWorks(locale: Locale): HowItWorks {
+  return BY_LOCALE[locale];
+}
+
+export const howItWorks = howItWorksEn;

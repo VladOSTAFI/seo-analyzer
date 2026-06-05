@@ -8,12 +8,11 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-import { howItWorks } from "@/lib/copy/how-it-works";
-import { CHECK_CATEGORIES } from "@/lib/checks";
+import { getRequestLocale } from "@/lib/i18n/server";
+import { getHowItWorks } from "@/lib/copy/how-it-works";
+import { getCheckCategories } from "@/lib/checks";
 import { Section } from "@/components/primitives/section";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-
-const { checks } = howItWorks;
 
 /** Maps each check category `key` to its icon — sourced alongside the data. */
 const CATEGORY_ICONS: Record<string, LucideIcon> = {
@@ -30,7 +29,11 @@ const CATEGORY_ICONS: Record<string, LucideIcon> = {
  * lists its individual checks as a definition list — breadth at a glance
  * without overwhelming a first-time reader. Data comes from `lib/checks.ts`.
  */
-export function ChecksGrid() {
+export async function ChecksGrid() {
+  const locale = await getRequestLocale();
+  const { checks } = getHowItWorks(locale);
+  const categories = getCheckCategories(locale);
+
   return (
     <Section eyebrow={checks.eyebrow} heading={checks.heading}>
       <p className="-mt-6 mb-12 max-w-2xl text-lg text-muted-foreground">
@@ -38,7 +41,7 @@ export function ChecksGrid() {
       </p>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {CHECK_CATEGORIES.map((group) => {
+        {categories.map((group) => {
           const Icon = CATEGORY_ICONS[group.key] ?? ShieldCheck;
           return (
             <Card

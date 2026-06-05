@@ -11,24 +11,22 @@ import {
 
 import type { FindingDto, Severity } from "@/lib/api/types";
 import { SEVERITIES } from "@/lib/api/types";
+import type { Locale } from "@/lib/i18n/config";
+import type { Dashboard } from "@/lib/copy/dashboard";
+import { fmt } from "@/lib/copy/dashboard";
 import { stripScheme } from "@/lib/format";
-import { resolveRuleInfo, type RuleInfo } from "@/lib/rule-catalog";
+import { resolveRuleInfoLocalized, type RuleInfo } from "@/lib/rule-catalog";
 import { cn } from "@/lib/utils";
 import { SeverityBadge } from "@/components/dashboard/severity-badge";
 
 /**
- * Grouped findings view. Instead of one opaque row per finding, we render one
- * card per distinct `ruleId` in the CURRENT page of results — headed by a
- * human-readable title, severity badge, and affected-count, with plain-language
- * "what / why / how" copy from the rule catalogue, then a collapsible list of
- * the affected URLs and their `detail` blobs underneath.
+ * Grouped findings view. One card per distinct `ruleId` in the CURRENT page of
+ * results — headed by a human-readable title, severity badge, and affected
+ * count, with plain-language "what / why / how" copy from the (locale-correct)
+ * rule catalogue, then a collapsible list of the affected URLs underneath.
  *
- * IMPORTANT: grouping happens within the page of findings the server handed us
- * (the route paginates server-side). The affected-count is "on this page"; the
- * page-level pagination still walks the full result set.
- *
- * Presentation-only and self-contained: the collapsible is a real
- * `<button aria-expanded>` + region, keyboard-operable, no new dependency.
+ * Grouping happens within the page the server handed us (route paginates
+ * server-side). All chrome strings are passed in via `strings` (localized).
  */
 
 const SEVERITY_RANK: Record<Severity, number> = SEVERITIES.reduce(
@@ -39,19 +37,22 @@ const SEVERITY_RANK: Record<Severity, number> = SEVERITIES.reduce(
   {} as Record<Severity, number>,
 );
 
-/** A rule group: the resolved copy + every finding on this page under it. */
+type FindingsStrings = Dashboard["findings"];
+
 interface RuleGroup {
   info: RuleInfo;
   findings: FindingDto[];
 }
 
-/** Group the current page of findings by ruleId, sorted by severity then size. */
-function groupByRule(items: FindingDto[]): RuleGroup[] {
+function groupByRule(items: FindingDto[], locale: Locale): RuleGroup[] {
   const byRule = new Map<string, RuleGroup>();
   for (const f of items) {
     let group = byRule.get(f.ruleId);
     if (!group) {
-      group = { info: resolveRuleInfo(f.ruleId, f.severity), findings: [] };
+      group = {
+        info: resolveRuleInfoLocalized(locale, f.ruleId, f.severity),
+        findings: [],
+      };
       byRule.set(f.ruleId, group);
     }
     group.findings.push(f);
@@ -63,10 +64,8 @@ function groupByRule(items: FindingDto[]): RuleGroup[] {
   });
 }
 
-/** How many affected URLs to show before the "show all" expander kicks in. */
 const URL_PREVIEW = 5;
 
-/** Render the jsonb `detail` as compact, humanized `key: value` pairs. */
 function DetailLine({ detail }: { detail: Record<string, unknown> }) {
   const entries = Object.entries(detail ?? {});
   if (entries.length === 0) return null;
@@ -85,7 +84,6 @@ function DetailLine({ detail }: { detail: Record<string, unknown> }) {
   );
 }
 
-/** `targetUrl` → "Target url"; keep it cheap, just split camel/snake/kebab. */
 function humanizeKey(key: string): string {
   const spaced = key
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
@@ -94,7 +92,13 @@ function humanizeKey(key: string): string {
   return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 }
 
-function AffectedRow({ finding }: { finding: FindingDto }) {
+function AffectedRow({
+  finding,
+  siteWide,
+}: {
+  finding: FindingDto;
+  siteWide: string;
+}) {
   const hasDetail = Object.keys(finding.detail ?? {}).length > 0;
   return (
     <li className="flex flex-col gap-0.5 border-t border-border/60 px-4 py-2.5 first:border-t-0">
@@ -111,7 +115,7 @@ function AffectedRow({ finding }: { finding: FindingDto }) {
         </a>
       ) : (
         <span className="font-mono text-xs text-muted-foreground/70">
-          — site-wide —
+          {siteWide}
         </span>
       )}
       {hasDetail && <DetailLine detail={finding.detail} />}
@@ -119,7 +123,15 @@ function AffectedRow({ finding }: { finding: FindingDto }) {
   );
 }
 
-function RuleGroupCard({ group }: { group: RuleGroup }) {
+function RuleGroupCard({
+  group,
+  locale,
+  strings,
+}: {
+  group: RuleGroup;
+  locale: Locale;
+  strings: FindingsStrings;
+}) {
   const { info, findings } = group;
   const count = findings.length;
   const [showAll, setShowAll] = useState(false);
@@ -134,7 +146,7 @@ function RuleGroupCard({ group }: { group: RuleGroup }) {
       <header className="flex flex-wrap items-start justify-between gap-3 p-5">
         <div className="min-w-0 space-y-1.5">
           <div className="flex flex-wrap items-center gap-2">
-            <SeverityBadge severity={info.severity} />
+            <SeverityBadge severity={info.severity} locale={locale} />
             <h2 className="text-base font-semibold tracking-tight text-foreground">
               {info.title}
             </h2>
@@ -148,34 +160,34 @@ function RuleGroupCard({ group }: { group: RuleGroup }) {
             </span>
             <code
               className="font-mono text-[11px] text-muted-foreground/80"
-              title="Technical rule id (used by support)"
+              title={strings.ruleIdTitle}
             >
               {info.id}
             </code>
           </div>
         </div>
         <span className="shrink-0 rounded-full border border-border bg-muted/40 px-2.5 py-1 text-xs font-medium text-muted-foreground">
-          {count} {count === 1 ? "page affected" : "pages affected"}
+          {count} {count === 1 ? strings.pageAffected : strings.pagesAffected}
         </span>
       </header>
 
       <div className="grid gap-3 px-5 pb-5 sm:grid-cols-3">
-        <Explainer icon={Info} label="What we found" text={info.whatItFlags} />
+        <Explainer icon={Info} label={strings.whatWeFound} text={info.whatItFlags} />
         <Explainer
           icon={ShieldAlert}
-          label="Why it matters"
+          label={strings.whyItMatters}
           text={info.whyItMatters}
         />
-        <Explainer icon={Lightbulb} label="How to fix it" text={info.howToFix} />
+        <Explainer icon={Lightbulb} label={strings.howToFix} text={info.howToFix} />
       </div>
 
       <div className="border-t border-border bg-muted/20">
         <p className="px-4 pt-3 text-[11px] font-medium tracking-wide text-muted-foreground/80 uppercase">
-          Affected {findings[0]?.url ? "pages" : "scope"}
+          {findings[0]?.url ? strings.affectedPages : strings.affectedScope}
         </p>
         <ul id={regionId} className="px-1 py-1">
           {visible.map((f) => (
-            <AffectedRow key={f.id} finding={f} />
+            <AffectedRow key={f.id} finding={f} siteWide={strings.siteWide} />
           ))}
         </ul>
         {collapsible && (
@@ -195,8 +207,11 @@ function RuleGroupCard({ group }: { group: RuleGroup }) {
                 aria-hidden
               />
               {showAll
-                ? "Show fewer"
-                : `Show all ${findings.length} (${hiddenCount} more)`}
+                ? strings.showFewer
+                : fmt(strings.showAll, {
+                    total: findings.length,
+                    more: hiddenCount,
+                  })}
             </button>
           </div>
         )}
@@ -228,37 +243,50 @@ function Explainer({
 export function FindingsGroups({
   items,
   total,
+  locale,
+  strings,
 }: {
   items: FindingDto[];
   total: number;
+  locale: Locale;
+  strings: FindingsStrings;
 }) {
-  const groups = useMemo(() => groupByRule(items), [items]);
+  const groups = useMemo(() => groupByRule(items, locale), [items, locale]);
 
   if (items.length === 0) {
     return (
       <p className="rounded-2xl border border-dashed border-border bg-card/40 px-4 py-10 text-center text-sm text-muted-foreground">
-        No findings for this filter.
+        {strings.noForFilter}
       </p>
     );
   }
 
   const truncated = total > items.length;
+  const issuesLabel =
+    groups.length === 1 ? strings.issueOnPage : strings.issuesOnPage;
 
   return (
     <div className="space-y-4">
       <p className="text-xs text-muted-foreground">
-        {groups.length} {groups.length === 1 ? "issue" : "issues"} on this page
-        {truncated ? `, ${items.length} of ${total} findings shown` : ""}.
+        {groups.length} {issuesLabel} {strings.onThisPage}
+        {truncated
+          ? fmt(strings.shownOfTotal, { shown: items.length, total })
+          : ""}
+        .
       </p>
 
       {groups.map((group) => (
-        <RuleGroupCard key={group.info.id} group={group} />
+        <RuleGroupCard
+          key={group.info.id}
+          group={group}
+          locale={locale}
+          strings={strings}
+        />
       ))}
 
       {truncated && (
         <p className="text-xs text-muted-foreground">
-          Showing the first {items.length} of {total} findings. Use the page
-          controls below, or filter by severity or rule, to see the rest.
+          {fmt(strings.showingFirst, { shown: items.length, total })}
         </p>
       )}
     </div>

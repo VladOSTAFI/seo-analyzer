@@ -5,8 +5,10 @@ import { useMemo } from "react";
 
 import type { Severity } from "@/lib/api/types";
 import { SEVERITIES } from "@/lib/api/types";
-import { SEVERITY_LABEL } from "@/lib/severity";
-import { ALL_RULES, getRuleInfo, humanizeRuleId } from "@/lib/rule-catalog";
+import { getSeverityLabels } from "@/lib/severity";
+import type { Locale } from "@/lib/i18n/config";
+import type { Dashboard } from "@/lib/copy/dashboard";
+import { getAllRules, getRuleInfoLocalized, humanizeRuleId } from "@/lib/rule-catalog";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -21,51 +23,46 @@ import {
 /**
  * Client filter bar for the findings view. Writes the active `severity` and
  * `ruleId` into the URL search params and navigates, so the (Server Component)
- * findings page re-fetches `GET /audits/:id/findings?severity&ruleId` through
- * the Bearer client. State lives in the URL → shareable + back-button friendly.
- *
- * The rule filter is a catalogue-backed `Select` grouped by family: the user
- * picks a human title and we map it back to the canonical `ruleId` query param.
- * If the URL already carries a `ruleId` we don't recognise (backend added a
- * rule first), we surface it as a humanized one-off option so the active filter
- * stays visible and clearable.
- *
- * Changing a filter resets pagination to page 1.
+ * findings page re-fetches. State lives in the URL → shareable + back-button
+ * friendly. All labels (severity, rule titles, families) are localized via
+ * `locale`; changing a filter resets pagination to page 1.
  */
 const ALL = "all";
 
-/** Build family → rules from the catalogue, preserving catalogue order. */
-function useRulesByFamily() {
-  return useMemo(() => {
-    const byFamily = new Map<string, typeof ALL_RULES>();
-    for (const rule of ALL_RULES) {
+export function FindingsFilters({
+  severity,
+  ruleId,
+  locale,
+  strings,
+}: {
+  severity?: Severity;
+  ruleId?: string;
+  locale: Locale;
+  strings: Dashboard["findings"];
+}) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const severityLabels = getSeverityLabels(locale);
+
+  // Build family → rules from the locale-correct catalogue, preserving order.
+  const rulesByFamily = useMemo(() => {
+    const all = getAllRules(locale);
+    const byFamily = new Map<string, typeof all>();
+    for (const rule of all) {
       const list = byFamily.get(rule.family) ?? [];
       list.push(rule);
       byFamily.set(rule.family, list);
     }
     return [...byFamily.entries()];
-  }, []);
-}
-
-export function FindingsFilters({
-  severity,
-  ruleId,
-}: {
-  severity?: Severity;
-  ruleId?: string;
-}) {
-  const router = useRouter();
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
-  const rulesByFamily = useRulesByFamily();
+  }, [locale]);
 
   // An active ruleId that isn't in the catalogue still needs a visible option.
   const unknownActiveRule =
-    ruleId && !getRuleInfo(ruleId) ? ruleId : undefined;
+    ruleId && !getRuleInfoLocalized(locale, ruleId) ? ruleId : undefined;
 
   function pushParams(next: { severity?: string; ruleId?: string }) {
     const params = new URLSearchParams(searchParams.toString());
-    // Filtering changes the result set — always return to page 1.
     params.delete("page");
 
     if ("severity" in next) {
@@ -88,20 +85,20 @@ export function FindingsFilters({
     <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
       <div className="sm:w-48">
         <Label className="mb-1.5 block text-xs text-muted-foreground">
-          Severity
+          {strings.severityLabel}
         </Label>
         <Select
           value={severity ?? ALL}
           onValueChange={(v) => pushParams({ severity: v })}
         >
           <SelectTrigger className="h-10 w-full">
-            <SelectValue placeholder="All severities" />
+            <SelectValue placeholder={strings.allSeverities} />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value={ALL}>All severities</SelectItem>
+            <SelectItem value={ALL}>{strings.allSeverities}</SelectItem>
             {SEVERITIES.map((s) => (
               <SelectItem key={s} value={s}>
-                {SEVERITY_LABEL[s]}
+                {severityLabels[s]}
               </SelectItem>
             ))}
           </SelectContent>
@@ -113,17 +110,17 @@ export function FindingsFilters({
           htmlFor="findings-rule"
           className="mb-1.5 block text-xs text-muted-foreground"
         >
-          Issue
+          {strings.issueLabel}
         </Label>
         <Select
           value={ruleId ?? ALL}
           onValueChange={(v) => pushParams({ ruleId: v })}
         >
           <SelectTrigger id="findings-rule" className="h-10 w-full">
-            <SelectValue placeholder="All issues" />
+            <SelectValue placeholder={strings.allIssues} />
           </SelectTrigger>
           <SelectContent className="max-h-80">
-            <SelectItem value={ALL}>All issues</SelectItem>
+            <SelectItem value={ALL}>{strings.allIssues}</SelectItem>
             {unknownActiveRule && (
               <SelectItem value={unknownActiveRule}>
                 {humanizeRuleId(unknownActiveRule)}

@@ -4,9 +4,11 @@ import { headers } from "next/headers";
 
 import {
   CONTACT_HONEYPOT_FIELD,
-  contactFormSchema,
+  getContactFormSchema,
   type ContactFieldErrors,
 } from "@/lib/validation";
+import { DEFAULT_LOCALE, isLocale } from "@/lib/i18n/config";
+import { getContact } from "@/lib/copy/contact";
 import { saveLead, type Lead } from "@/lib/leads";
 
 /**
@@ -63,20 +65,26 @@ async function getClientIp(): Promise<string> {
   return headerList.get("x-real-ip")?.trim() || "unknown";
 }
 
-const GENERAL_ERROR =
-  "We couldn't send your message. Please check the form and try again.";
-const RATE_LIMITED_ERROR =
-  "You've sent a few messages already. Please wait a little while before trying again.";
-
 /**
  * Contact-form Server Action. `useActionState` signature: `(prevState, formData)`.
  * Anti-spam: silent honeypot drop + per-IP rate limit. Validation: the shared
- * zod schema, re-run server-side (never trusts the client).
+ * zod schema (locale-correct), re-run server-side (never trusts the client).
+ *
+ * Locale is read from a hidden `locale` form field (the form lives on a
+ * `[locale]` page) so the validation + feedback messages match the user's
+ * language; an invalid/absent value falls back to English.
  */
 export async function submitContactForm(
   _prevState: ContactFormState,
   formData: FormData,
 ): Promise<ContactFormState> {
+  const localeRaw = formData.get("locale");
+  const locale =
+    typeof localeRaw === "string" && isLocale(localeRaw)
+      ? localeRaw
+      : DEFAULT_LOCALE;
+  const feedback = getContact(locale).form.feedback;
+
   // 1) Honeypot — a filled hidden field means a bot. Report success so the bot
   //    gets no signal, but persist nothing.
   const honeypot = formData.get(CONTACT_HONEYPOT_FIELD);
@@ -87,11 +95,11 @@ export async function submitContactForm(
   // 2) Rate limit (best-effort, per-instance).
   const ip = await getClientIp();
   if (ip !== "unknown" && isRateLimited(ip)) {
-    return { status: "error", formError: RATE_LIMITED_ERROR };
+    return { status: "error", formError: feedback.rateLimited };
   }
 
-  // 3) Validate with the shared schema (single source of truth).
-  const parsed = contactFormSchema.safeParse({
+  // 3) Validate with the shared (locale-correct) schema.
+  const parsed = getContactFormSchema(locale).safeParse({
     name: formData.get("name"),
     email: formData.get("email"),
     siteUrl: formData.get("siteUrl"),
@@ -115,11 +123,11 @@ export async function submitContactForm(
   try {
     const result = await saveLead(lead);
     if (!result.ok) {
-      return { status: "error", formError: GENERAL_ERROR };
+      return { status: "error", formError: feedback.errorGeneral };
     }
     return { status: "success" };
   } catch {
     // Never leak provider internals to the client.
-    return { status: "error", formError: GENERAL_ERROR };
+    return { status: "error", formError: feedback.errorGeneral };
   }
 }

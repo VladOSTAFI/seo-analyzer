@@ -4,29 +4,33 @@ import { FileSearch } from "lucide-react";
 
 import { listAudits, ApiError } from "@/lib/api/client";
 import { getCurrentUser } from "@/lib/auth/current-user";
-import { PRODUCT_NAME, AUDITS_HREF } from "@/lib/constants";
+import { AUDITS_HREF } from "@/lib/constants";
+import { DEFAULT_LOCALE, isLocale, localeHref } from "@/lib/i18n/config";
+import { getRequestLocale } from "@/lib/i18n/server";
+import { getDashboard, fmt } from "@/lib/copy/dashboard";
 import type { Paginated, AuditDto } from "@/lib/api/types";
 import { DEFAULT_LIMIT } from "@/lib/api/types";
 import { Button } from "@/components/ui/button";
 import { AuditsTable } from "@/components/dashboard/audits-table";
 import { StartAuditForm } from "@/components/dashboard/start-audit-form";
 
-export const metadata: Metadata = {
-  title: "Audits",
-  description: `Your ${PRODUCT_NAME} audits.`,
-};
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ locale: string }>;
+}): Promise<Metadata> {
+  const { locale: raw } = await params;
+  const locale = isLocale(raw) ? raw : DEFAULT_LOCALE;
+  const { meta } = getDashboard(locale);
+  return { title: meta.auditsTitle, description: meta.auditsDescription };
+}
 
 /**
  * Audits list (Phase 5). Server Component that fetches the caller's own audits
  * via the Bearer API client (`GET /audits`, page-scoped by the backend).
  *
- * `force-dynamic` keeps this route off the build-time prerender path so it
- * compiles + renders with the backend DOWN — the fetch happens per-request, and
- * an unreachable backend degrades to an inline error state rather than failing
- * the build (no live calls at build time).
- *
- * Pagination is URL-driven via `?page=` (1-based) so it's shareable and works
- * without client JS; the page size is the backend default.
+ * `force-dynamic` keeps this off the build-time prerender path so it compiles +
+ * renders with the backend DOWN. Pagination is URL-driven via `?page=`.
  */
 export const dynamic = "force-dynamic";
 
@@ -42,6 +46,8 @@ export default async function AuditsPage({
 }: {
   searchParams: Promise<{ page?: string }>;
 }) {
+  const locale = await getRequestLocale();
+  const t = getDashboard(locale);
   const [{ page: pageParam }, user] = await Promise.all([
     searchParams,
     getCurrentUser(),
@@ -57,47 +63,44 @@ export default async function AuditsPage({
   } catch (e) {
     error =
       e instanceof ApiError && e.status === 0
-        ? "Couldn't reach the backend. Your audits will appear here once it's available."
-        : "Couldn't load your audits right now. Please try again shortly.";
+        ? t.audits.errorUnreachable
+        : t.audits.errorGeneral;
   }
 
   const items = result?.items ?? [];
   const total = result?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const pageHref = (p: number) =>
+    localeHref(`${AUDITS_HREF}?page=${p}`, locale);
 
   return (
     <div className="space-y-8">
       <header className="flex flex-col gap-2">
         <div className="flex items-center gap-3">
           <h1 className="text-2xl font-semibold tracking-tight text-foreground md:text-3xl">
-            Audits
+            {t.audits.heading}
           </h1>
           {isAdmin && (
             <span className="rounded-full border border-primary/30 bg-primary/10 px-2.5 py-0.5 text-xs font-medium text-primary">
-              All audits (admin)
+              {t.audits.adminBadge}
             </span>
           )}
         </div>
         <p className="text-sm text-muted-foreground">
-          {isAdmin
-            ? "As an admin you can see every audit across all users."
-            : "Every audit you've started, newest first."}
+          {isAdmin ? t.audits.introAdmin : t.audits.introUser}
         </p>
       </header>
 
       {/* Start a new audit */}
       <section
-        aria-label="Start an audit"
+        aria-label={t.audits.startSectionLabel}
         className="rounded-2xl border border-border bg-card p-5 md:p-6"
       >
         <h2 className="mb-3 text-sm font-medium text-foreground">
-          Start a new audit
+          {t.audits.startNewAudit}
         </h2>
-        <StartAuditForm />
-        <p className="mt-3 text-xs text-muted-foreground">
-          Enter a public website URL (http or https). We&apos;ll crawl it, run
-          the checks, and build a developer-ready report.
-        </p>
+        <StartAuditForm locale={locale} strings={t.startForm} />
+        <p className="mt-3 text-xs text-muted-foreground">{t.audits.startHint}</p>
       </section>
 
       {/* List / empty / error */}
@@ -110,31 +113,30 @@ export default async function AuditsPage({
         </div>
       ) : items.length === 0 ? (
         <section
-          aria-label="No audits"
+          aria-label={t.audits.noAuditsTitle}
           className="rounded-2xl border border-dashed border-border bg-card/40 px-6 py-16 text-center"
         >
           <div className="mx-auto flex size-12 items-center justify-center rounded-full bg-primary/10">
             <FileSearch aria-hidden className="size-6 text-primary" />
           </div>
           <h2 className="mt-5 text-lg font-medium text-foreground">
-            No audits yet
+            {t.audits.noAuditsTitle}
           </h2>
           <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
-            Start your first audit above. Its status, severity rollups, and
-            report will show up here.
+            {t.audits.noAuditsBody}
           </p>
         </section>
       ) : (
-        <section aria-label="Your audits" className="space-y-4">
-          <AuditsTable items={items} />
+        <section aria-label={t.audits.heading} className="space-y-4">
+          <AuditsTable items={items} locale={locale} />
 
           {totalPages > 1 && (
             <nav
-              aria-label="Pagination"
+              aria-label={t.pagination.label}
               className="flex items-center justify-between text-sm"
             >
               <span className="text-muted-foreground">
-                Page {page} of {totalPages} · {total} total
+                {fmt(t.pagination.pageOf, { page, totalPages, total })}
               </span>
               <div className="flex gap-2">
                 <Button
@@ -145,9 +147,9 @@ export default async function AuditsPage({
                   className="h-9"
                 >
                   {page > 1 ? (
-                    <Link href={`${AUDITS_HREF}?page=${page - 1}`}>Previous</Link>
+                    <Link href={pageHref(page - 1)}>{t.pagination.previous}</Link>
                   ) : (
-                    <span>Previous</span>
+                    <span>{t.pagination.previous}</span>
                   )}
                 </Button>
                 <Button
@@ -158,9 +160,9 @@ export default async function AuditsPage({
                   className="h-9"
                 >
                   {page < totalPages ? (
-                    <Link href={`${AUDITS_HREF}?page=${page + 1}`}>Next</Link>
+                    <Link href={pageHref(page + 1)}>{t.pagination.next}</Link>
                   ) : (
-                    <span>Next</span>
+                    <span>{t.pagination.next}</span>
                   )}
                 </Button>
               </div>

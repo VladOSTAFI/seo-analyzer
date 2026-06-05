@@ -9,6 +9,8 @@ import type { AuditDetailDto } from "@/lib/api/types";
 import { isTerminal } from "@/lib/api/types";
 import { auditProxyPath } from "@/lib/api/client-paths";
 import { AUDITS_HREF } from "@/lib/constants";
+import { localeHref, type Locale } from "@/lib/i18n/config";
+import type { Dashboard } from "@/lib/copy/dashboard";
 import { stripScheme, formatDateTime } from "@/lib/format";
 import {
   Card,
@@ -23,34 +25,28 @@ import { ReportDownloadButton } from "@/components/dashboard/report-download-but
 
 /**
  * Client wrapper that owns the live state of an audit detail. It receives the
- * server-rendered initial `AuditDetailDto` (fetched in the page's Server
- * Component via the Bearer client) and, while the audit is non-terminal, polls
- * `GET /audits/:id` THROUGH THE PROXY every ~3s.
- *
- * Proxy + polling boundary (how they work together):
- *   - Every poll is `fetch(auditProxyPath(id))` — a same-origin call to
- *     `/api/proxy/audits/:id`. The browser NEVER hits the backend directly; the
- *     proxy route attaches the Bearer token from the httpOnly cookie.
- *   - Because polls can outlive a 15-minute access token, the proxy's
- *     transparent 401→refresh→retry keeps long polls authenticated and rotates
- *     the cookies server-side, invisibly to this component.
- *   - On a `401` that the proxy COULDN'T recover (refresh failed → session
- *     ended), it returns 401 + cleared cookies; we stop polling and refresh the
- *     route so the dashboard layout's server gate bounces to `/login`.
- *
- * Teardown: a mounted flag + a cleared timeout id ensure no state update or
- * re-schedule fires after unmount, and the loop stops the moment status is
- * terminal (`done`/`failed`). When it reaches terminal we also `router.refresh`
- * once so the server-rendered findings section picks up the final data.
+ * server-rendered initial `AuditDetailDto` and, while the audit is non-terminal,
+ * polls `GET /audits/:id` THROUGH THE PROXY every ~3s. All copy is passed in
+ * (localized server-side); the polling/refresh behavior is unchanged.
  */
-export function AuditDetailLive({ initial }: { initial: AuditDetailDto }) {
+export function AuditDetailLive({
+  initial,
+  locale,
+  strings,
+  reportStrings,
+}: {
+  initial: AuditDetailDto;
+  locale: Locale;
+  strings: Dashboard["detail"];
+  pipelineStages: Dashboard["pipelineStages"];
+  statusLabels: Dashboard["status"];
+  reportStrings: Dashboard["report"];
+}) {
   const [audit, setAudit] = useState<AuditDetailDto>(initial);
   const router = useRouter();
-  // Refresh the route exactly once on the running→terminal transition.
   const refreshedOnDone = useRef(false);
 
   useEffect(() => {
-    // Already terminal on first render → nothing to poll.
     if (isTerminal(audit.status)) return;
 
     let alive = true;
@@ -62,18 +58,15 @@ export function AuditDetailLive({ initial }: { initial: AuditDetailDto }) {
           cache: "no-store",
         });
 
-        // Session ended (proxy couldn't refresh) → stop + bounce via server gate.
         if (res.status === 401) {
           if (alive) router.refresh();
           return;
         }
-        // Audit vanished (e.g. deleted) → re-render server side (→ not found).
         if (res.status === 404) {
           if (alive) router.refresh();
           return;
         }
         if (!res.ok) {
-          // Transient error — try again on the next interval.
           if (alive) timer = setTimeout(() => void tick(), 3000);
           return;
         }
@@ -85,13 +78,12 @@ export function AuditDetailLive({ initial }: { initial: AuditDetailDto }) {
         if (isTerminal(next.status)) {
           if (!refreshedOnDone.current) {
             refreshedOnDone.current = true;
-            router.refresh(); // pull final findings into the server section
+            router.refresh();
           }
-          return; // stop the loop
+          return;
         }
         timer = setTimeout(() => void tick(), 3000);
       } catch {
-        // Network hiccup — retry on the next interval if still mounted.
         if (alive) timer = setTimeout(() => void tick(), 3000);
       }
     }
@@ -102,8 +94,6 @@ export function AuditDetailLive({ initial }: { initial: AuditDetailDto }) {
       alive = false;
       if (timer) clearTimeout(timer);
     };
-    // Re-arm only when the audit id changes; status transitions are handled
-    // inside the loop (which returns on terminal).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initial.id]);
 
@@ -115,10 +105,10 @@ export function AuditDetailLive({ initial }: { initial: AuditDetailDto }) {
       <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0 space-y-2">
           <Link
-            href={AUDITS_HREF}
+            href={localeHref(AUDITS_HREF, locale)}
             className="text-xs font-medium text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
           >
-            ← All audits
+            {strings.allAudits}
           </Link>
           <h1 className="flex items-center gap-2 text-xl font-semibold tracking-tight text-foreground md:text-2xl">
             <a
@@ -133,10 +123,10 @@ export function AuditDetailLive({ initial }: { initial: AuditDetailDto }) {
             <ArrowUpRight aria-hidden className="size-4 shrink-0 text-muted-foreground" />
           </h1>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm text-muted-foreground">
-            <AuditStatusBadge status={audit.status} />
+            <AuditStatusBadge status={audit.status} locale={locale} />
             {audit.status === "failed" && audit.failedStage && (
               <span className="font-mono text-xs text-destructive">
-                failed at: {audit.failedStage}
+                {strings.failedAt} {audit.failedStage}
               </span>
             )}
             <span className="font-mono text-xs">
@@ -148,6 +138,8 @@ export function AuditDetailLive({ initial }: { initial: AuditDetailDto }) {
         <ReportDownloadButton
           auditId={audit.id}
           reportReady={audit.reportPath !== null}
+          label={reportStrings.download}
+          notReadyTitle={reportStrings.notReadyTitle}
         />
       </div>
 
@@ -155,25 +147,28 @@ export function AuditDetailLive({ initial }: { initial: AuditDetailDto }) {
       <Card>
         <CardHeader>
           <CardTitle className="text-sm font-medium text-muted-foreground">
-            Pipeline
+            {strings.pipeline}
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <PipelineStepper status={audit.status} failedStage={audit.failedStage} />
+          <PipelineStepper
+            status={audit.status}
+            failedStage={audit.failedStage}
+            locale={locale}
+          />
           {running && (
             <p className="text-sm text-muted-foreground">
-              Pipeline running — this readout refreshes automatically every few
-              seconds.
+              {strings.pipelineRunning}
             </p>
           )}
         </CardContent>
       </Card>
 
-      {/* Rollups (only meaningful once terminal, but harmless while running) */}
+      {/* Rollups */}
       <Card>
         <CardHeader className="flex-row items-baseline justify-between gap-4">
           <CardTitle className="text-sm font-medium text-muted-foreground">
-            Findings
+            {strings.findings}
           </CardTitle>
           <span className="text-2xl font-semibold tracking-tight text-foreground">
             {audit.findingsTotal}
@@ -182,14 +177,13 @@ export function AuditDetailLive({ initial }: { initial: AuditDetailDto }) {
         <CardContent>
           {audit.findingsTotal === 0 ? (
             <p className="text-sm text-muted-foreground">
-              {running
-                ? "Findings appear once analysis completes."
-                : "No findings — this site passed every check."}
+              {running ? strings.findingsAppearWhenRunning : strings.noFindings}
             </p>
           ) : (
             <SeverityRollup
               bySeverity={audit.bySeverity}
               total={audit.findingsTotal}
+              locale={locale}
               legend
             />
           )}

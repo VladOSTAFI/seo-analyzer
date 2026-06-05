@@ -1,16 +1,19 @@
-import { home } from "@/lib/copy/home";
+import { getRequestLocale } from "@/lib/i18n/server";
+import { localeHref } from "@/lib/i18n/config";
+import { getHome } from "@/lib/copy/home";
 import { Container } from "@/components/primitives/container";
 import { PillBadge } from "@/components/primitives/pill-badge";
 import { CTAButton } from "@/components/primitives/cta-button";
-
-const { hero } = home;
 
 /**
  * Asymmetric hero with a clear left-weighted focal point and a soft violet
  * glow anchoring the top-left. Content fades + lifts in on load via CSS only
  * (`.hero-rise`), disabled under `prefers-reduced-motion` (see globals.css).
  */
-export function Hero() {
+export async function Hero() {
+  const locale = await getRequestLocale();
+  const { hero } = getHome(locale);
+
   return (
     <section className="relative overflow-hidden">
       {/* Soft violet radial, top-left — the asymmetric light source. */}
@@ -48,10 +51,10 @@ export function Hero() {
             className="hero-rise mt-10 flex flex-wrap items-center gap-4"
             style={{ animationDelay: "240ms" }}
           >
-            <CTAButton href={hero.primaryCta.href} variant="primary">
+            <CTAButton href={localeHref(hero.primaryCta.href, locale)} variant="primary">
               {hero.primaryCta.label}
             </CTAButton>
-            <CTAButton href={hero.secondaryCta.href} variant="secondary">
+            <CTAButton href={localeHref(hero.secondaryCta.href, locale)} variant="secondary">
               {hero.secondaryCta.label}
             </CTAButton>
           </div>

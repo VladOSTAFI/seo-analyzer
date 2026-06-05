@@ -1,11 +1,10 @@
 import { Check, Download } from "lucide-react";
 
-import { howItWorks } from "@/lib/copy/how-it-works";
+import { getRequestLocale } from "@/lib/i18n/server";
+import { getHowItWorks } from "@/lib/copy/how-it-works";
 import { Container } from "@/components/primitives/container";
 import { MediaFrame } from "@/components/primitives/media-frame";
 import { Button } from "@/components/ui/button";
-
-const { report } = howItWorks;
 
 /**
  * "What the report looks like": a screenshot of the deliverable (MediaFrame
@@ -13,7 +12,9 @@ const { report } = howItWorks;
  * the value bullets, and a download link for a sample `.xlsx`. Two columns that
  * stack on mobile.
  */
-export function ReportPreview() {
+export async function ReportPreview() {
+  const { report } = getHowItWorks(await getRequestLocale());
+
   return (
     <section className="py-20 md:py-28">
       <Container>

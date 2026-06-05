@@ -5,23 +5,27 @@ import { useFormStatus } from "react-dom";
 import { toast } from "sonner";
 import { CheckCircle2 } from "lucide-react";
 
-import { contact } from "@/lib/copy/contact";
-import { CONTACT_HONEYPOT_FIELD, contactFormSchema } from "@/lib/validation";
+import type { Locale } from "@/lib/i18n/config";
+import type { Contact } from "@/lib/copy/contact";
+import {
+  CONTACT_HONEYPOT_FIELD,
+  getContactFormSchema,
+} from "@/lib/validation";
 import type { ContactFieldErrors } from "@/lib/validation";
 import {
   submitContactForm,
   initialContactState,
-} from "@/app/contact/actions";
+} from "@/app/[locale]/contact/actions";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 
-const { fields, submit, feedback } = contact.form;
+type FormStrings = Contact["form"];
 
 /** Submit button — `useFormStatus` reads the enclosing form's pending state. */
-function SubmitButton() {
+function SubmitButton({ submit }: { submit: FormStrings["submit"] }) {
   const { pending } = useFormStatus();
   return (
     <Button
@@ -46,7 +50,14 @@ function FieldError({ id, messages }: { id: string; messages?: string[] }) {
   );
 }
 
-export function ContactForm() {
+export function ContactForm({
+  strings,
+  locale,
+}: {
+  strings: FormStrings;
+  locale: Locale;
+}) {
+  const { fields, submit, feedback } = strings;
   const [state, formAction] = useActionState(
     submitContactForm,
     initialContactState,
@@ -55,7 +66,7 @@ export function ContactForm() {
   const formRef = useRef<HTMLFormElement>(null);
   const idPrefix = useId();
 
-  // Client-side errors (zod, same schema) layered over any server errors.
+  // Client-side errors (zod, same locale-correct schema) over any server errors.
   const [clientErrors, setClientErrors] = useState<ContactFieldErrors>({});
   const serverErrors = state.status === "error" ? state.fieldErrors : undefined;
   const errors: ContactFieldErrors = { ...serverErrors, ...clientErrors };
@@ -73,15 +84,14 @@ export function ContactForm() {
     } else if (state.status === "error" && state.formError) {
       toast.error(feedback.errorTitle, { description: state.formError });
     }
-  }, [state]);
+  }, [state, feedback]);
 
-  // Run the shared zod schema on the client before invoking the action. On
-  // failure, surface field errors and stop the submit; the server re-validates
-  // regardless, so this is purely a faster feedback loop.
+  // Run the shared (locale-correct) zod schema on the client before invoking the
+  // action. The server re-validates regardless — this is just faster feedback.
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     const form = event.currentTarget;
     const data = new FormData(form);
-    const result = contactFormSchema.safeParse({
+    const result = getContactFormSchema(locale).safeParse({
       name: data.get("name"),
       email: data.get("email"),
       siteUrl: data.get("siteUrl"),
@@ -123,6 +133,9 @@ export function ContactForm() {
         noValidate
         className="grid gap-5"
       >
+        {/* Carry the active locale so the action localizes validation + feedback. */}
+        <input type="hidden" name="locale" value={locale} />
+
         {/* Honeypot — visually hidden, off the tab order, ignored by humans. */}
         <div aria-hidden className="hidden">
           <label htmlFor={fieldId(CONTACT_HONEYPOT_FIELD)}>
@@ -242,7 +255,7 @@ export function ContactForm() {
         )}
 
         <div className="pt-1">
-          <SubmitButton />
+          <SubmitButton submit={submit} />
         </div>
       </form>
     </div>

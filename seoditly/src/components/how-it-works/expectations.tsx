@@ -5,10 +5,9 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-import { howItWorks } from "@/lib/copy/how-it-works";
+import { getRequestLocale } from "@/lib/i18n/server";
+import { getHowItWorks } from "@/lib/copy/how-it-works";
 import { Section } from "@/components/primitives/section";
-
-const { expectations } = howItWorks;
 
 /** Maps each expectation `key` to its icon — keeps icons out of the copy file. */
 const EXPECTATION_ICONS: Record<string, LucideIcon> = {
@@ -22,7 +21,9 @@ const EXPECTATION_ICONS: Record<string, LucideIcon> = {
  * that findings are prioritized by severity. Three compact cells in a row that
  * stack on mobile.
  */
-export function Expectations() {
+export async function Expectations() {
+  const { expectations } = getHowItWorks(await getRequestLocale());
+
   return (
     <Section eyebrow={expectations.eyebrow} heading={expectations.heading}>
       <dl className="grid grid-cols-1 gap-4 sm:grid-cols-3">
