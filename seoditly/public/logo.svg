@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 184 40" fill="none">
+  <defs>
+    <linearGradient id="sd-logo-grad" x1="5" y1="5" x2="35" y2="35" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#D8B4FE"/>
+      <stop offset="0.55" stop-color="#A855F7"/>
+      <stop offset="1" stop-color="#7C3AED"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(4 4)">
+    <circle cx="14" cy="14" r="8.5" stroke="url(#sd-logo-grad)" stroke-width="2.6"/>
+    <path d="M20.4 20.4 26.4 26.4" stroke="url(#sd-logo-grad)" stroke-width="2.8" stroke-linecap="round"/>
+    <path d="M9.8 16.6 12.8 13.2 15.4 15.2 18.4 10.8" stroke="url(#sd-logo-grad)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="18.4" cy="10.8" r="1.6" fill="url(#sd-logo-grad)"/>
+  </g>
+  <text x="48" y="27" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="23" font-weight="600" letter-spacing="-0.6" fill="#FAFAFA">seoditly</text>
+</svg>

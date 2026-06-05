@@ -3,6 +3,7 @@ import { sql } from 'drizzle-orm';
 import { InvalidArgumentError } from '../common/errors';
 import { DB, type Database } from '../db/db.types';
 import { AuditRepository } from '../audit/audit.repository';
+import { LinkVerifierService } from './link-verifier';
 import type { EnrichSummary } from './enrich.types';
 
 /**
@@ -27,9 +28,23 @@ function scalarCount(result: { rows: Record<string, unknown>[] }): number {
  * Phase 2 enrichment (§"Phase 2 — Enrichment", §1/§8). Turns the raw crawl
  * output into actionable link/inlink/hreflang/image signals using **set-based
  * SQL only** — every write is a single `UPDATE` (reset-then-set or aggregate),
- * never a row-by-row loop in Node. All writes are scoped by `audit_id` and run
- * inside ONE transaction, so a partial failure leaves the prior enrichment
- * intact and a re-run reproduces identical results (idempotent).
+ * never a row-by-row loop in Node. All set-based writes are scoped by `audit_id`
+ * and run inside ONE transaction, so a partial failure leaves the prior
+ * enrichment intact and a re-run reproduces identical results (idempotent).
+ *
+ * AFTER that transaction commits, a **live broken-link verification pass**
+ * ({@link LinkVerifierService}) re-checks every link flagged `is_broken = true`
+ * with a fresh, browser-like HTTP request and clears the flag for false
+ * positives (a page that momentarily 5xx'd under crawl load, or that blocks the
+ * bot UA, but returns 200 to a real browser). This pass is run OUTSIDE the
+ * transaction on purpose — holding a DB transaction open across many slow,
+ * retrying network calls would pin a connection and risk lock/timeout problems.
+ * Because it depends on live network responses it is NOT strictly idempotent
+ * (two runs can disagree if the target's live status changed); that is a
+ * deliberate, correct tradeoff — the pass exists precisely to reflect the
+ * CURRENT live state rather than the frozen crawl snapshot. The pass is
+ * best-effort: any failure inside it is caught and logged and does NOT fail
+ * the enrich stage.
  *
  * Status semantics mirror Phase 1: status is set to `enriching` at the start and
  * LEFT at `enriching` on success — `enriching` is the settled "enriched" state
@@ -43,6 +58,7 @@ export class EnrichService {
   constructor(
     @Inject(DB) private readonly db: Database,
     private readonly auditRepo: AuditRepository,
+    private readonly linkVerifier: LinkVerifierService,
   ) {}
 
   async enrich(auditId: string): Promise<EnrichSummary> {
@@ -64,6 +80,8 @@ export class EnrichService {
     this.logger.log(`Enrich start audit=${auditId} pages=${pageCount}`);
 
     try {
+      // (1) Set-based enrichment + initial summary snapshot — committed in ONE
+      // transaction, exactly as before. These steps stay idempotent.
       const summary = await this.db.transaction(async (tx) => {
         await this.resolveLinkTargets(tx, auditId);
         await this.computeInlinkCounts(tx, auditId);
@@ -73,10 +91,31 @@ export class EnrichService {
         return this.collectSummary(tx, auditId);
       });
 
+      // (2) Live broken-link verification pass — network I/O + its own small
+      // UPDATEs, run AFTER the transaction commits (see class docblock for why).
+      // Best-effort: it never throws, so it cannot fail the enrich stage.
+      const verify = await this.linkVerifier.verifyBrokenLinks(auditId);
+      summary.linksVerified = verify.linksVerified;
+      summary.falsePositivesCleared = verify.falsePositivesCleared;
+      summary.verifyInconclusive = verify.verifyInconclusive;
+
+      // (3) If the verification pass cleared any false positives, the in-txn
+      // broken count is now stale — recompute it from the just-updated rows so
+      // the summary/log reflect the post-verification truth.
+      if (verify.falsePositivesCleared > 0) {
+        summary.brokenLinks = scalarCount(
+          await this.db.execute(
+            sql`select count(*)::int as n from links where audit_id = ${auditId} and is_broken = true`,
+          ),
+        );
+      }
+
       const elapsedMs = Date.now() - startedAt;
       this.logger.log(
         `Enrich done audit=${auditId} links=${summary.linksResolved} ` +
           `(redirect=${summary.redirectLinks}, broken=${summary.brokenLinks}) ` +
+          `verified=${summary.linksVerified} false_positives_cleared=${summary.falsePositivesCleared} ` +
+          `verify_inconclusive=${summary.verifyInconclusive} ` +
           `inlinked_pages=${summary.pagesWithInlinks} ` +
           `images=${summary.imagesResolved} hreflang_reciprocal=${summary.hreflangReciprocal} ` +
           `redirect_chains=${summary.redirectChainPages} loops=${summary.redirectLoopPages} ` +
@@ -102,6 +141,8 @@ export class EnrichService {
    *
    * Reset-then-set guarantees idempotency: the reset clears any stale values
    * (incl. links whose target is no longer crawled) so a re-run is identical.
+   * (The post-commit verification pass may then flip some `is_broken` flags back
+   * to false based on a live re-check — see the class docblock.)
    */
   private async resolveLinkTargets(tx: Executor, auditId: string): Promise<void> {
     await tx.execute(sql`
@@ -172,7 +213,8 @@ export class EnrichService {
    * SEAM: a live HTTP HEAD-check pass over every image src (the usual way to
    * surface broken images) is a deliberate future enhancement, NOT done here —
    * Phase 2 is intentionally fully set-based per the plan headline. The log line
-   * below keeps that seam visible.
+   * below keeps that seam visible. (The link verifier introduces a comparable
+   * live-check, but only for links already flagged broken, not for images.)
    */
   private async resolveImageStatus(tx: Executor, auditId: string): Promise<void> {
     await tx.execute(sql`
@@ -201,6 +243,10 @@ export class EnrichService {
    * detected set-based by comparing the array length against the count of
    * DISTINCT `elem->>'url'` (distinct < total ⇒ some url repeats ⇒ loop). The
    * `redirect_chain` column defaults to `[]`, so the length guard is safe.
+   *
+   * The verification counts (`linksVerified`/`falsePositivesCleared`/
+   * `verifyInconclusive`) are filled in by the caller AFTER the live pass; here
+   * they are seeded to zero so the summary is complete inside the transaction.
    */
   private async collectSummary(tx: Executor, auditId: string): Promise<EnrichSummary> {
     const linksResolved = scalarCount(
@@ -263,6 +309,10 @@ export class EnrichService {
       hreflangReciprocal,
       redirectChainPages,
       redirectLoopPages,
+      // Filled in post-transaction by the live verification pass.
+      linksVerified: 0,
+      falsePositivesCleared: 0,
+      verifyInconclusive: 0,
     };
   }
 }

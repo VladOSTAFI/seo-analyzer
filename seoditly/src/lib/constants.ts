@@ -25,3 +25,30 @@ export const REGISTER_HREF = "/register";
  */
 export const COOKIE_ACCESS_TOKEN = "sd_at";
 export const COOKIE_REFRESH_TOKEN = "sd_rt";
+
+/**
+ * Shared cookie attributes + lifetimes for the token pair. Defined here (a
+ * dependency-free module, no `next/headers`) so BOTH the session writers
+ * (`lib/auth/session.ts`, Server Actions) and the middleware refresh boundary
+ * (`src/middleware.ts`) stamp an IDENTICAL cookie — same
+ * `httpOnly`/`secure`/`sameSite`/`path` — so a rotation written by one boundary
+ * cleanly overwrites the cookie set by another. These are attributes/lifetimes
+ * only — NO secrets — so it is safe to keep them in this browser-importable
+ * module.
+ *
+ * The cookie max-ages cap browser lifetime; the backend still enforces the real
+ * token TTLs (access ≈ 15m, refresh ≈ 30d) and single-use refresh rotation.
+ *
+ * NOTE on `secure`: it is OFF in dev. A `Secure` cookie is dropped by the
+ * browser over plain `http://localhost`, which would silently break the whole
+ * session on a local backend — hence prod-only.
+ */
+export const ACCESS_COOKIE_MAX_AGE = 60 * 60 * 24; // 1 day
+export const REFRESH_COOKIE_MAX_AGE = 60 * 60 * 24 * 30; // 30 days
+
+export const BASE_TOKEN_COOKIE = {
+  httpOnly: true,
+  secure: process.env.NODE_ENV === "production",
+  sameSite: "lax",
+  path: "/",
+} as const;

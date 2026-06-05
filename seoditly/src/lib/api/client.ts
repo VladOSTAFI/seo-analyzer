@@ -1,7 +1,12 @@
 import "server-only";
 
 import { backendUrl, refreshTokens } from "@/lib/api/backend";
-import { getAccessToken, setSession, clearSession } from "@/lib/auth/session";
+import {
+  getAccessToken,
+  setSession,
+  clearSession,
+  cookiesAreWritable,
+} from "@/lib/auth/session";
 import type {
   AuditDetailDto,
   AuditDto,
@@ -19,13 +24,23 @@ import type {
  * (Server Components / Server Actions), reads the access token from the httpOnly
  * cookie, and attaches `Authorization: Bearer` itself — the same identity-
  * carrying boundary the `/api/proxy` route enforces for browser-initiated
- * traffic. It mirrors the proxy's transparent-refresh behaviour: on a `401` it
- * refreshes ONCE, rotates the cookies, and retries; if refresh fails it clears
- * the session and surfaces the `401` so callers can redirect to `/login`.
+ * traffic.
+ *
+ * Transparent refresh — and the Next 16 cookie-write constraint:
+ *   `cookies().set()` is ONLY legal in a Server Action or Route Handler; during
+ *   a Server Component render the store is read-only and throws. So this client
+ *   can only safely rotate the cookie pair when invoked from a write-capable
+ *   phase (e.g. the start-audit Server Action). When invoked during render
+ *   (e.g. the dashboard fetching `listAudits`), the proactive refresh boundary
+ *   in `src/middleware.ts` has already rotated an expired token BEFORE render,
+ *   so a 401 here is unexpected; if it still happens we surface it WITHOUT
+ *   consuming the single-use refresh token (which we couldn't persist anyway),
+ *   leaving the middleware to recover on the next navigation. In a write-capable
+ *   phase we keep the familiar refresh-once-rotate-retry behaviour, mirroring
+ *   the proxy.
  *
  * The `request<T>` helper + `ApiError` shape are ported from
- * `frontend/src/api.ts` so the error contract is familiar. Phase 5 extends the
- * audit methods (findings filters, report streaming, start-audit validation).
+ * `frontend/src/api.ts` so the error contract is familiar.
  */
 
 /** Thrown for any non-2xx response; carries the HTTP status + server message. */
@@ -76,8 +91,17 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     );
   }
 
-  // Transparent refresh, mirroring the proxy: refresh once, rotate, retry.
+  // ── Transparent refresh on 401 ────────────────────────────────────────────
   if (res.status === 401) {
+    // Cookie rotation requires a write-capable phase. During a Server Component
+    // render the store is sealed: refreshing here would burn the single-use
+    // refresh token without being able to persist the rotated pair, breaking
+    // the chain. In that case surface the 401 WITHOUT clearing the session, so
+    // the middleware refresh boundary can recover on the next navigation.
+    if (!(await cookiesAreWritable())) {
+      throw new ApiError(401, "Session expired.");
+    }
+
     const { getRefreshToken } = await import("@/lib/auth/session");
     const refreshToken = await getRefreshToken();
     const rotated = refreshToken ? await refreshTokens(refreshToken) : null;

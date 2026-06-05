@@ -1,6 +1,7 @@
 import { InvalidArgumentError } from '../common/errors';
 import type { Database } from '../db/db.types';
 import type { AuditRepository } from '../audit/audit.repository';
+import type { LinkVerifierService } from './link-verifier';
 import { EnrichService } from './enrich.service';
 
 const AUDIT_ID = '11111111-2222-3333-4444-555555555555';
@@ -50,9 +51,23 @@ const DEFAULT_COUNTS: CannedCounts = {
   redirectLoopPages: 1,
 };
 
-function makeDeps(opts: { pageCount?: number; counts?: CannedCounts } = {}) {
+/** Default verify result: the pass ran but found nothing to clear. */
+const DEFAULT_VERIFY = {
+  linksVerified: 0,
+  falsePositivesCleared: 0,
+  verifyInconclusive: 0,
+};
+
+function makeDeps(
+  opts: {
+    pageCount?: number;
+    counts?: CannedCounts;
+    verify?: typeof DEFAULT_VERIFY;
+  } = {},
+) {
   const pageCount = opts.pageCount ?? 5;
   const counts = opts.counts ?? DEFAULT_COUNTS;
+  const verify = opts.verify ?? DEFAULT_VERIFY;
 
   // The tx executor: UPDATEs resolve to an empty result; the eight summary
   // SELECTs (collectSummary) resolve to the canned counts in issue order. A
@@ -78,7 +93,8 @@ function makeDeps(opts: { pageCount?: number; counts?: CannedCounts } = {}) {
 
   const transaction = jest.fn(async (cb: (t: typeof tx) => Promise<unknown>) => cb(tx));
 
-  // Top-level db.execute serves only the pages-count guard.
+  // Top-level db.execute serves the pages-count guard AND, post-verification,
+  // the recomputed broken-links count. Both are single-`n` count SELECTs.
   const dbExecute = jest.fn().mockResolvedValue(countResult(pageCount));
   const db = { execute: dbExecute, transaction } as unknown as Database;
 
@@ -88,13 +104,17 @@ function makeDeps(opts: { pageCount?: number; counts?: CannedCounts } = {}) {
     markFailed: jest.fn().mockResolvedValue(undefined),
   } as unknown as jest.Mocked<AuditRepository>;
 
-  return { db, dbExecute, tx, txExecute, transaction, auditRepo, counts };
+  const linkVerifier = {
+    verifyBrokenLinks: jest.fn().mockResolvedValue(verify),
+  } as unknown as jest.Mocked<LinkVerifierService>;
+
+  return { db, dbExecute, tx, txExecute, transaction, auditRepo, linkVerifier, counts };
 }
 
 describe('EnrichService.enrich', () => {
   it('asserts existence then sets status to enriching before any work', async () => {
-    const { db, auditRepo } = makeDeps();
-    const service = new EnrichService(db, auditRepo);
+    const { db, auditRepo, linkVerifier } = makeDeps();
+    const service = new EnrichService(db, auditRepo, linkVerifier);
 
     await service.enrich(AUDIT_ID);
 
@@ -108,8 +128,8 @@ describe('EnrichService.enrich', () => {
   });
 
   it('throws InvalidArgumentError and does NOT setStatus when there are zero crawled pages', async () => {
-    const { db, auditRepo, transaction } = makeDeps({ pageCount: 0 });
-    const service = new EnrichService(db, auditRepo);
+    const { db, auditRepo, transaction, linkVerifier } = makeDeps({ pageCount: 0 });
+    const service = new EnrichService(db, auditRepo, linkVerifier);
 
     await expect(service.enrich(AUDIT_ID)).rejects.toBeInstanceOf(InvalidArgumentError);
     await expect(service.enrich(AUDIT_ID)).rejects.toThrow(/audit:crawl/);
@@ -117,42 +137,86 @@ describe('EnrichService.enrich', () => {
     expect(auditRepo.setStatus).not.toHaveBeenCalled();
     expect(auditRepo.markFailed).not.toHaveBeenCalled();
     expect(transaction).not.toHaveBeenCalled();
+    expect(linkVerifier.verifyBrokenLinks).not.toHaveBeenCalled();
   });
 
   it('runs all enrichment work inside a single transaction', async () => {
-    const { db, auditRepo, transaction } = makeDeps();
-    const service = new EnrichService(db, auditRepo);
+    const { db, auditRepo, transaction, linkVerifier } = makeDeps();
+    const service = new EnrichService(db, auditRepo, linkVerifier);
 
     await service.enrich(AUDIT_ID);
 
     expect(transaction).toHaveBeenCalledTimes(1);
   });
 
+  it('runs the live verification pass AFTER the transaction commits', async () => {
+    const { db, auditRepo, transaction, linkVerifier } = makeDeps();
+    const service = new EnrichService(db, auditRepo, linkVerifier);
+
+    await service.enrich(AUDIT_ID);
+
+    expect(linkVerifier.verifyBrokenLinks).toHaveBeenCalledWith(AUDIT_ID);
+    const txOrder = transaction.mock.invocationCallOrder[0];
+    const verifyOrder = (linkVerifier.verifyBrokenLinks as jest.Mock).mock.invocationCallOrder[0];
+    expect(txOrder).toBeLessThan(verifyOrder);
+  });
+
   it('marks the audit failed at stage "enrich" and rethrows on a txn error', async () => {
-    const { db, auditRepo, transaction } = makeDeps();
+    const { db, auditRepo, transaction, linkVerifier } = makeDeps();
     const boom = new Error('boom');
     // Force the transaction body to throw.
     transaction.mockImplementationOnce(async () => {
       throw boom;
     });
-    const service = new EnrichService(db, auditRepo);
+    const service = new EnrichService(db, auditRepo, linkVerifier);
 
     await expect(service.enrich(AUDIT_ID)).rejects.toBe(boom);
     expect(auditRepo.markFailed).toHaveBeenCalledWith(AUDIT_ID, 'enrich');
   });
 
-  it('returns an EnrichSummary assembled from the canned counts', async () => {
-    const { db, auditRepo, counts } = makeDeps();
-    const service = new EnrichService(db, auditRepo);
+  it('returns an EnrichSummary assembled from the canned counts (zero verify by default)', async () => {
+    const { db, auditRepo, counts, linkVerifier } = makeDeps();
+    const service = new EnrichService(db, auditRepo, linkVerifier);
 
     const summary = await service.enrich(AUDIT_ID);
 
-    expect(summary).toEqual(counts);
+    expect(summary).toEqual({ ...counts, ...DEFAULT_VERIFY });
+  });
+
+  it('folds the verification counts into the summary and recomputes broken when false positives cleared', async () => {
+    const verify = { linksVerified: 4, falsePositivesCleared: 3, verifyInconclusive: 1 };
+    const { db, dbExecute, auditRepo, counts, linkVerifier } = makeDeps({ verify });
+    // The pages-count guard returns 5; the post-verification broken recount
+    // returns 1 (down from the in-txn count of 2 after clearing 3 positives —
+    // numbers here are illustrative, the recount is authoritative).
+    dbExecute.mockResolvedValueOnce(countResult(5)).mockResolvedValueOnce(countResult(1));
+    const service = new EnrichService(db, auditRepo, linkVerifier);
+
+    const summary = await service.enrich(AUDIT_ID);
+
+    expect(summary.linksVerified).toBe(4);
+    expect(summary.falsePositivesCleared).toBe(3);
+    expect(summary.verifyInconclusive).toBe(1);
+    // brokenLinks reflects the post-verification recount, not the in-txn count.
+    expect(summary.brokenLinks).toBe(1);
+    expect(summary.brokenLinks).not.toBe(counts.brokenLinks);
+  });
+
+  it('does NOT recompute broken when no false positives were cleared', async () => {
+    const verify = { linksVerified: 2, falsePositivesCleared: 0, verifyInconclusive: 2 };
+    const { db, dbExecute, auditRepo, counts, linkVerifier } = makeDeps({ verify });
+    const service = new EnrichService(db, auditRepo, linkVerifier);
+
+    const summary = await service.enrich(AUDIT_ID);
+
+    // Only the pages-count guard hit db.execute — no recount SELECT.
+    expect(dbExecute).toHaveBeenCalledTimes(1);
+    expect(summary.brokenLinks).toBe(counts.brokenLinks);
   });
 
   it('leaves status at enriching on success (no failed/extra transition)', async () => {
-    const { db, auditRepo } = makeDeps();
-    const service = new EnrichService(db, auditRepo);
+    const { db, auditRepo, linkVerifier } = makeDeps();
+    const service = new EnrichService(db, auditRepo, linkVerifier);
 
     await service.enrich(AUDIT_ID);
 

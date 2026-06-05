@@ -3,6 +3,7 @@ import Link from "next/link";
 import { NAV_ITEMS, PRODUCT_NAME } from "@/lib/constants";
 import { common } from "@/lib/copy/common";
 import { Container } from "@/components/primitives/container";
+import { Logo } from "@/components/brand/logo";
 
 /** Site footer: product name, tagline, minimal links, copyright. */
 export function Footer() {
@@ -13,10 +14,8 @@ export function Footer() {
       <Container>
         <div className="flex flex-col gap-8 py-12 md:flex-row md:items-start md:justify-between">
           <div className="max-w-sm">
-            <p className="text-base font-semibold tracking-tight text-foreground">
-              {PRODUCT_NAME}
-            </p>
-            <p className="mt-2 text-sm text-muted-foreground">
+            <Logo />
+            <p className="mt-3 text-sm text-muted-foreground">
               {common.footerTagline}
             </p>
           </div>

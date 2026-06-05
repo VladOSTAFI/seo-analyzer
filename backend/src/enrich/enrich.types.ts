@@ -4,15 +4,20 @@
  * both structured logging and the `audit:enrich` CLI summary line.
  *
  * Every field is a count derived from a lightweight SELECT after the enrichment
- * UPDATEs commit — it is purely observability, never persisted. Re-running enrich
- * on the same audit yields identical numbers (the enrichment is idempotent).
+ * UPDATEs commit — it is purely observability, never persisted. The set-based
+ * enrichment counts are idempotent; the verification counts (see below) are NOT,
+ * because they reflect a live network re-check that can legitimately differ
+ * between runs (see {@link import('./link-verifier').LinkVerifierService}).
  */
 export interface EnrichSummary {
   /** Links matched to a crawled page (i.e. `target_status_code` set non-null). */
   linksResolved: number;
   /** Links whose resolved target is a 3xx page (`is_redirect = true`). */
   redirectLinks: number;
-  /** Links whose resolved target is a 4xx/5xx page (`is_broken = true`). */
+  /**
+   * Links whose target is 4xx/5xx (`is_broken = true`) AFTER the live
+   * verification pass has cleared false positives. Recomputed post-verification.
+   */
   brokenLinks: number;
   /** Pages with at least one internal inlink (`inlink_count > 0`) after update. */
   pagesWithInlinks: number;
@@ -24,4 +29,12 @@ export interface EnrichSummary {
   redirectChainPages: number;
   /** Pages whose `redirect_chain` contains a repeated url (a redirect loop). */
   redirectLoopPages: number;
+
+  // --- Live broken-link verification pass (post-transaction, network-dependent).
+  /** Distinct broken-flagged target URLs actually re-fetched (after dedup + cap). */
+  linksVerified: number;
+  /** Distinct targets cleared because the live re-check was healthy (false positives). */
+  falsePositivesCleared: number;
+  /** Distinct targets left untouched because the re-check failed (net error/timeout). */
+  verifyInconclusive: number;
 }

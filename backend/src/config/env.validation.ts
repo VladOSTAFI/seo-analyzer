@@ -27,6 +27,21 @@ const strWithDefault = (def: string) =>
     .transform((v) => (v === undefined || v === '' ? def : v));
 
 /**
+ * Coerce a string env var into a boolean, with a default. Accepts the usual
+ * truthy/falsy spellings case-insensitively (`true/1/yes/on` ⇒ true,
+ * `false/0/no/off` ⇒ false); empty/unset falls back to the default. Anything
+ * else fails validation so a typo (`LINK_VERIFY_ENABLED=ture`) is loud, not
+ * silently coerced.
+ */
+const boolWithDefault = (def: boolean) =>
+  z
+    .string()
+    .optional()
+    .transform((v) => (v === undefined || v === '' ? (def ? 'true' : 'false') : v.trim().toLowerCase()))
+    .pipe(z.enum(['true', '1', 'yes', 'on', 'false', '0', 'no', 'off']))
+    .transform((v) => v === 'true' || v === '1' || v === 'yes' || v === 'on');
+
+/**
  * Authoritative env schema. Mirrors the Configuration Reference (§10 of the
  * implementation plan; §6 of the authorization plan). Vars unused until later
  * phases are still defined now so the contract is stable.
@@ -50,6 +65,32 @@ export const envSchema = z.object({
 
   // PSI sampling cap (Phase 4).
   PSI_MAX_SAMPLES: intWithDefault(20),
+
+  // --- Broken-link verification pass (Phase 2 enrich). Re-checks links the
+  // crawl flagged `is_broken` with a fresh, browser-like request to clear
+  // false positives (a page that momentarily 5xx'd under crawl load, or that
+  // blocks the bot UA). See EnrichService / LinkVerifierService.
+  //
+  // Master gate for the whole pass. When false the enrich stage skips
+  // verification entirely and reports zero verify counts.
+  LINK_VERIFY_ENABLED: boolWithDefault(true),
+  // Max simultaneous in-flight verification requests. Kept small on purpose —
+  // the original false 5xx came from crawl-time load, so we must NOT hammer the
+  // origin while re-checking.
+  LINK_VERIFY_CONCURRENCY: intWithDefault(5),
+  // Per-request timeout (ms), applied via AbortSignal.timeout.
+  LINK_VERIFY_TIMEOUT_MS: intWithDefault(10000),
+  // Retries for transient network errors (per distinct URL), with small backoff.
+  LINK_VERIFY_RETRIES: intWithDefault(2),
+  // Browser-like User-Agent used for verification. Deliberately NOT the crawl
+  // bot UA (CRAWL_USER_AGENT) — UA-based blocking is part of the root cause.
+  LINK_VERIFY_USER_AGENT: strWithDefault(
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+      '(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+  ),
+  // Hard cap on distinct URLs verified per audit, so a pathological audit can't
+  // fire unbounded requests. Truncation is logged.
+  LINK_VERIFY_MAX: intWithDefault(500),
 
   // Report output directory (Phase 5).
   OUTPUT_DIR: z

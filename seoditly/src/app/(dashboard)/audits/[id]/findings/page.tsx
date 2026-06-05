@@ -9,7 +9,7 @@ import { SEVERITIES, DEFAULT_LIMIT } from "@/lib/api/types";
 import type { Severity, Paginated, FindingDto } from "@/lib/api/types";
 import { Button } from "@/components/ui/button";
 import { FindingsFilters } from "@/components/dashboard/findings-filters";
-import { FindingsTable } from "@/components/dashboard/findings-table";
+import { FindingsGroups } from "@/components/dashboard/findings-groups";
 
 export const metadata: Metadata = {
   title: "Findings",
@@ -139,7 +139,7 @@ export default async function FindingsPage({
         </div>
       ) : (
         <>
-          <FindingsTable items={items} total={total} />
+          <FindingsGroups items={items} total={total} />
 
           {totalPages > 1 && (
             <nav

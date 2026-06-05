@@ -5,9 +5,10 @@ import Link from "next/link";
 import { Menu, X } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { NAV_ITEMS, PRODUCT_NAME } from "@/lib/constants";
+import { NAV_ITEMS } from "@/lib/constants";
 import { Container } from "@/components/primitives/container";
 import { Button } from "@/components/ui/button";
+import { Logo } from "@/components/brand/logo";
 
 /**
  * Client shell for the top navigation: text logo, primary links, and the
@@ -31,10 +32,11 @@ export function NavShell({
         <nav className="flex h-16 items-center justify-between gap-6">
           <Link
             href="/"
-            className="rounded-sm text-base font-semibold tracking-tight text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            aria-label="seoditly home"
+            className="inline-flex items-center rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
             onClick={() => setOpen(false)}
           >
-            {PRODUCT_NAME}
+            <Logo />
           </Link>
 
           {/* Desktop links */}

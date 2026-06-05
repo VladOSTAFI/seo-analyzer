@@ -38,14 +38,27 @@ export function isAllowedProxyPath(path: string): boolean {
 }
 
 /**
- * Exchange the opaque refresh token for a rotated `{ accessToken, refreshToken }`
- * pair via `POST /auth/refresh`. Returns `null` on any non-200 (invalid /
- * expired / revoked / network), signalling the caller to clear cookies and
- * force re-login. Never logs the tokens.
+ * Outcome of a refresh attempt, distinguishing the two failure modes so callers
+ * can react correctly:
+ *   - `{ ok: true, tokens }`  — rotated pair issued.
+ *   - `{ ok: false, reason: "rejected" }`   — backend answered non-200 (invalid /
+ *      expired / revoked refresh token) → the session is genuinely over.
+ *   - `{ ok: false, reason: "unreachable" }` — network/transport failure → the
+ *      session may still be valid; callers should NOT log the user out over a
+ *      transient outage.
  */
-export async function refreshTokens(
+export type RefreshResult =
+  | { ok: true; tokens: IssuedTokens }
+  | { ok: false; reason: "rejected" | "unreachable" };
+
+/**
+ * Exchange the opaque refresh token for a rotated `{ accessToken, refreshToken }`
+ * pair via `POST /auth/refresh`, distinguishing "rejected" from "unreachable".
+ * Never logs the tokens.
+ */
+export async function refreshTokensResult(
   refreshToken: string,
-): Promise<IssuedTokens | null> {
+): Promise<RefreshResult> {
   let res: Response;
   try {
     res = await fetch(backendUrl("/auth/refresh"), {
@@ -55,10 +68,11 @@ export async function refreshTokens(
       cache: "no-store",
     });
   } catch {
-    return null;
+    // Transport failure — backend down/unreachable. Not an auth rejection.
+    return { ok: false, reason: "unreachable" };
   }
 
-  if (!res.ok) return null;
+  if (!res.ok) return { ok: false, reason: "rejected" };
 
   try {
     const body = (await res.json()) as Partial<IssuedTokens>;
@@ -66,10 +80,27 @@ export async function refreshTokens(
       typeof body.accessToken === "string" &&
       typeof body.refreshToken === "string"
     ) {
-      return { accessToken: body.accessToken, refreshToken: body.refreshToken };
+      return {
+        ok: true,
+        tokens: { accessToken: body.accessToken, refreshToken: body.refreshToken },
+      };
     }
   } catch {
-    /* fall through */
+    /* fall through — malformed body is treated as a rejection */
   }
-  return null;
+  return { ok: false, reason: "rejected" };
+}
+
+/**
+ * Convenience wrapper preserving the original contract: returns the rotated pair
+ * on success or `null` on any failure (rejected OR unreachable), signalling the
+ * caller to clear cookies and force re-login. Used by the proxy handler and the
+ * server API client, where a failed refresh during a live authenticated request
+ * already means the session can't continue.
+ */
+export async function refreshTokens(
+  refreshToken: string,
+): Promise<IssuedTokens | null> {
+  const result = await refreshTokensResult(refreshToken);
+  return result.ok ? result.tokens : null;
 }
