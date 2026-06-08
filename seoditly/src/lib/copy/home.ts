@@ -14,19 +14,19 @@ import { mergeCopy, type DeepPartial } from "@/lib/i18n/merge";
  */
 export const homeEn = {
   meta: {
-    title: "Automated technical SEO audits",
+    title: "Technical SEO audits for agencies and freelancers",
     description:
-      `${PRODUCT_NAME} crawls your site, runs ~31 technical checks, and hands ` +
-      "your developers a severity-ranked Excel report they can action.",
+      `${PRODUCT_NAME} crawls your site, runs ~31 technical checks, and gives ` +
+      "you a severity-ranked, client-ready Excel report.",
   },
 
   hero: {
     badge: "Early access · launching soon",
     headline:
-      "Technical SEO audits, automated into a developer-ready report.",
+      "Technical SEO audits, done in minutes — not afternoons.",
     subhead:
-      "Point us at your site. We crawl every page, run ~31 technical checks, and return a single severity-ranked spec your developers can ship against.",
-    primaryCta: { label: "Get a free audit", href: "/contact" },
+      "Built for agencies and freelancers. Point us at a client's site and we crawl every page (up to 500), run ~31 technical checks plus Core Web Vitals, and rank every issue by severity — in one client-ready Excel report you can hand straight to your client.",
+    primaryCta: { label: "Run a free audit", href: "/register" },
     secondaryCta: { label: "How it works", href: "/how-it-works" },
   },
 
@@ -34,9 +34,9 @@ export const homeEn = {
     eyebrow: "Proof",
     items: [
       {
-        value: "48 → 805",
-        label: "Pages in, findings out",
-        sub: "From a single covecta.io crawl.",
+        value: "500",
+        label: "Pages per crawl",
+        sub: "Every page on a client's site, in one pass.",
       },
       {
         value: "~31",
@@ -46,26 +46,37 @@ export const homeEn = {
       {
         value: "1",
         label: "Excel report",
-        sub: "Severity-ranked and developer-ready.",
+        sub: "Severity-ranked and client-ready.",
       },
     ],
   },
 
+  problem: {
+    eyebrow: "The problem",
+    heading: "Still exporting a crawler into a spreadsheet at 11pm?",
+    body: "Every client audit eats the same hours: crawl the site, decode raw columns, decide what actually matters, then rebuild it all into something presentable. It is slow, it is billable time lost, and one missed critical issue is the one your client notices.",
+    bullets: [
+      "Raw data dump: a crawler hands you columns, not answers.",
+      "You interpret it: hours spent deciding what matters and why.",
+      "You rebuild the report: an afternoon of formatting a client-ready spreadsheet.",
+    ],
+  },
+
   platform: {
-    eyebrow: "The platform",
-    heading: "Every issue, mapped and ranked in one place.",
+    eyebrow: "The dashboard",
+    heading: "Watch the audit run, with every issue explained.",
     mediaAlt:
-      "Product dashboard — crawl coverage, findings by severity, and report status",
+      "Product dashboard — live pipeline, findings ranked by severity, and plain-language what, why, and how for each issue",
   },
 
   report: {
     eyebrow: "The deliverable",
     heading: "The report is the product.",
-    body: "You do not get a wall of raw data. You get a styled Excel spec — the same structured format your developers already work from — with every issue categorized, ranked, and ready to action.",
+    body: "You do not get a wall of raw data. You get a formatted, multi-sheet Excel report with every issue categorized, ranked, and explained — ready to put in front of a client without an afternoon of formatting.",
     bullets: [
       "Categorized fix tables, grouped by issue type.",
       "Severity ranking so the highest-impact work surfaces first.",
-      "Developer-ready: each row maps to a concrete, shippable change.",
+      "Client-ready: every issue explained in plain language — what, why, how.",
     ],
     mediaAlt:
       "Excel report screenshot — categorized fix tables ranked by severity",
@@ -80,7 +91,7 @@ export const homeEn = {
         key: "crawl",
         title: "Crawl",
         description:
-          "We fetch every page, link, image, and meta tag on your site.",
+          "We fetch every page, link, image, and meta tag on the site.",
       },
       {
         key: "enrich",
@@ -101,15 +112,15 @@ export const homeEn = {
       {
         key: "report",
         title: "Report",
-        description: "A styled Excel spec your developers can action.",
+        description: "A styled, client-ready Excel report.",
       },
     ],
   },
 
   ctaBand: {
-    headline: "Get a free audit of your site.",
-    body: "See exactly what is holding your technical SEO back — and hand your team a report they can act on.",
-    cta: { label: "Get a free audit", href: "/contact" },
+    headline: "Run a free audit of any client's site.",
+    body: "See exactly what is holding a site's technical SEO back — and hand your client a report they will actually read. Free, no install.",
+    cta: { label: "Run a free audit", href: "/register" },
   },
 } as const;
 
@@ -117,19 +128,19 @@ export type Home = typeof homeEn;
 
 const homeUk: DeepPartial<Home> = {
   meta: {
-    title: "Автоматизований технічний SEO-аудит",
+    title: "Технічний SEO-аудит для агенцій і фрилансерів",
     description:
-      `${PRODUCT_NAME} сканує ваш сайт, виконує ~31 технічну перевірку й ` +
-      "передає розробникам Excel-звіт із пріоритетами за критичністю, готовий до роботи.",
+      `${PRODUCT_NAME} сканує сайт, виконує ~31 технічну перевірку й видає ` +
+      "вам Excel-звіт із пріоритетами за критичністю, готовий для клієнта.",
   },
 
   hero: {
     badge: "Ранній доступ · скоро запуск",
     headline:
-      "Технічний SEO-аудит, автоматично зведений у звіт для розробників.",
+      "Технічний SEO-аудит за лічені хвилини, а не за вечір.",
     subhead:
-      "Вкажіть нам свій сайт. Ми проскануємо кожну сторінку, виконаємо ~31 технічну перевірку й повернемо єдину специфікацію із пріоритетами за критичністю, з яким зможуть працювати ваші розробники.",
-    primaryCta: { label: "Безкоштовний аудит", href: "/contact" },
+      "Створено для агенцій і фрилансерів. Вкажіть нам сайт клієнта — ми проскануємо кожну сторінку (до 500), виконаємо ~31 технічну перевірку та Core Web Vitals і впорядкуємо кожну проблему за критичністю в одному Excel-звіті, готовому для клієнта, який можна передати йому одразу.",
+    primaryCta: { label: "Зробити безкоштовний аудит", href: "/register" },
     secondaryCta: { label: "Як це працює", href: "/how-it-works" },
   },
 
@@ -137,9 +148,9 @@ const homeUk: DeepPartial<Home> = {
     eyebrow: "Факти",
     items: [
       {
-        value: "48 → 805",
-        label: "Сторінки на вході — висновки на виході",
-        sub: "З одного сканування covecta.io.",
+        value: "500",
+        label: "Сторінок за одне сканування",
+        sub: "Кожна сторінка сайту клієнта за один прохід.",
       },
       {
         value: "~31",
@@ -149,26 +160,37 @@ const homeUk: DeepPartial<Home> = {
       {
         value: "1",
         label: "Excel-звіт",
-        sub: "З пріоритетами за критичністю, готовий для розробників.",
+        sub: "З пріоритетами за критичністю, готовий для клієнта.",
       },
     ],
   },
 
+  problem: {
+    eyebrow: "Проблема",
+    heading: "Досі вивантажуєте кравлер у таблицю об 11-й вечора?",
+    body: "Кожен аудит клієнта з'їдає ті самі години: проскануй сайт, розшифруй сирі стовпці, виріши, що насправді важливо, а потім збери все в щось презентабельне. Це повільно, це втрачені оплачувані години, і одна пропущена критична проблема — саме та, яку помітить клієнт.",
+    bullets: [
+      "Сирі дані: кравлер видає стовпці, а не відповіді.",
+      "Ви інтерпретуєте: години на те, щоб вирішити, що важливо й чому.",
+      "Ви перебудовуєте звіт: вечір на форматування таблиці, готової для клієнта.",
+    ],
+  },
+
   platform: {
-    eyebrow: "Платформа",
-    heading: "Усі проблеми зібрані й упорядковані в одному місці.",
+    eyebrow: "Кабінет",
+    heading: "Спостерігайте за аудитом, де кожну проблему пояснено.",
     mediaAlt:
-      "Кабінет продукту — охоплення сканування, висновки за критичністю та статус звіту",
+      "Кабінет продукту — живий конвеєр, висновки за критичністю та просте пояснення що, чому і як для кожної проблеми",
   },
 
   report: {
     eyebrow: "Результат",
     heading: "Звіт — це і є продукт.",
-    body: "Ви отримуєте не стіну сирих даних, а охайну Excel-специфікацію — той самий структурований формат, з яким уже працюють ваші розробники, — де кожну проблему категоризовано, проранжовано й готово до виправлення.",
+    body: "Ви отримуєте не стіну сирих даних, а охайний багатоаркушевий Excel-звіт, де кожну проблему категоризовано, проранжовано й пояснено — готовий покласти перед клієнтом без вечора форматування.",
     bullets: [
       "Категоризовані таблиці виправлень, згруповані за типом проблеми.",
       "Ранжування за критичністю — найважливіше нагорі.",
-      "Готово для розробників: кожен рядок — це конкретна зміна, яку можна впровадити.",
+      "Готово для клієнта: кожну проблему пояснено простою мовою — що, чому, як.",
     ],
     mediaAlt:
       "Знімок Excel-звіту — категоризовані таблиці виправлень, проранжовані за критичністю",
@@ -183,7 +205,7 @@ const homeUk: DeepPartial<Home> = {
         key: "crawl",
         title: "Сканування",
         description:
-          "Ми отримуємо кожну сторінку, посилання, зображення та meta-теги вашого сайту.",
+          "Ми отримуємо кожну сторінку, посилання, зображення та meta-теги сайту.",
       },
       {
         key: "enrich",
@@ -204,15 +226,15 @@ const homeUk: DeepPartial<Home> = {
       {
         key: "report",
         title: "Звіт",
-        description: "Охайна Excel-специфікація, готова для ваших розробників.",
+        description: "Охайний Excel-звіт, готовий для клієнта.",
       },
     ],
   },
 
   ctaBand: {
-    headline: "Отримайте безкоштовний аудит свого сайту.",
-    body: "Дізнайтеся, що саме стримує ваше технічне SEO, — і передайте команді звіт, з яким вона зможе працювати.",
-    cta: { label: "Безкоштовний аудит", href: "/contact" },
+    headline: "Зробіть безкоштовний аудит сайту будь-якого клієнта.",
+    body: "Дізнайтеся, що саме стримує технічне SEO сайту, — і передайте клієнту звіт, який він справді прочитає. Безкоштовно, без установлення.",
+    cta: { label: "Зробити безкоштовний аудит", href: "/register" },
   },
 };
 
