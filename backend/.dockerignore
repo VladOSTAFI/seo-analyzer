@@ -1,0 +1,7 @@
+node_modules
+dist
+output
+drizzle
+.env
+**/*.spec.ts
+**/*.int-spec.ts
