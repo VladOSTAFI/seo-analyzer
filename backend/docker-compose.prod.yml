@@ -12,6 +12,10 @@ services:
       PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - /mnt/pgdata:/var/lib/postgresql/data     # dedicated persistent disk
+    ports:
+      # localhost-only: reachable via an SSH tunnel (e.g. DBeaver), NOT the internet.
+      # Do NOT change to '5432:5432' and do NOT open 5432 in the firewall.
+      - '127.0.0.1:5432:5432'
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U seo -d seo_audit']
       interval: 5s
