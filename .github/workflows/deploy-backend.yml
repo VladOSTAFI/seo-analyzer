@@ -1,0 +1,55 @@
+name: Deploy backend to VM
+
+# Auto-deploy the NestJS backend to the Compute Engine VM on every push to main
+# that touches backend/. The frontend deploys itself via Vercel's Git integration,
+# so this workflow is backend-only.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/deploy-backend.yml'
+  workflow_dispatch: {}   # allow manual "Run workflow" from the Actions tab
+
+# Never let two deploys run at once (the VM builds in place).
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.VM_SSH_KEY }}
+          script_stop: true          # abort on first failing command
+          command_timeout: 20m       # the in-place image build can take ~5 min
+          script: |
+            set -euo pipefail
+            cd ~/seo
+
+            # Sync the VM to main exactly (.env is gitignored, so it's preserved).
+            git fetch --depth=1 origin main
+            git reset --hard origin/main
+
+            cd backend
+
+            # Rebuild the backend image and recreate changed containers.
+            docker compose -f docker-compose.prod.yml up -d --build
+
+            # Reclaim disk from old image layers (the VM disk is small).
+            docker image prune -f
+
+            # Verify the backend actually came back up.
+            sleep 5
+            docker compose -f docker-compose.prod.yml ps
+            if [ "$(docker inspect -f '{{.State.Running}}' seo-audit-backend)" != "true" ]; then
+              echo "::error::backend container is not running after deploy"
+              docker compose -f docker-compose.prod.yml logs --tail=80 backend
+              exit 1
+            fi
+            echo "Deploy OK"
