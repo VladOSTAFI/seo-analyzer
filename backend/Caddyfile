@@ -7,6 +7,6 @@
 #
 # If you later buy a domain, just swap this line for `api.yourdomain.com` and
 # point an A record at the IP — nothing else changes.
-203-0-113-10.sslip.io {
+34-76-57-230.sslip.io {
 	reverse_proxy backend:8080
 }
