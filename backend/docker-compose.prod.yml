@@ -7,6 +7,9 @@ services:
       POSTGRES_USER: seo
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: seo_audit
+      # Init into a SUBDIR of the mount so the disk's `lost+found` (created by
+      # mkfs.ext4) doesn't make PGDATA non-empty and block initdb.
+      PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - /mnt/pgdata:/var/lib/postgresql/data     # dedicated persistent disk
     healthcheck:
