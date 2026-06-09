@@ -1,0 +1,52 @@
+services:
+  postgres:
+    image: postgres:16.4
+    container_name: seo-audit-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: seo
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: seo_audit
+    volumes:
+      - /mnt/pgdata:/var/lib/postgresql/data     # dedicated persistent disk
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U seo -d seo_audit']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  backend:
+    build: .                                      # uses backend/Dockerfile
+    container_name: seo-audit-backend
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      API_PORT: 8080
+      OUTPUT_DIR: /data/output
+      NODE_ENV: production
+      DATABASE_URL: postgres://seo:${DB_PASSWORD}@postgres:5432/seo_audit
+    volumes:
+      - reports:/data/output                      # report .xlsx (local disk, one box)
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  caddy:
+    image: caddy:2
+    container_name: seo-audit-caddy
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - backend
+
+volumes:
+  reports:
+  caddy_data:
+  caddy_config:
