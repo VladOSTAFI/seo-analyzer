@@ -24,6 +24,8 @@ function metrics(over: Partial<PsiMetrics> = {}): PsiMetrics {
     tbtMs: 250,
     speedIndexMs: 3000,
     usabilityFlags: ['unsized-images'],
+    cwvSource: 'field',
+    isOriginFallback: false,
     raw: { ok: true },
     ...over,
   };
@@ -309,5 +311,28 @@ describe('PerformanceService.run', () => {
 
     expect(deps.auditRepo.setStatus).not.toHaveBeenCalled();
     expect(deps.auditRepo.markFailed).not.toHaveBeenCalled();
+  });
+
+  it('persists isOriginFallback and cwvSource from PSI metrics onto the performance row', async () => {
+    const originMetrics = metrics({ isOriginFallback: true, cwvSource: 'field' });
+    const psiFetch = jest.fn().mockResolvedValue(originMetrics);
+    const deps = makeDeps({
+      candidates: [{ url: 'https://x.test/page', inlinkCount: 1, depth: 1 }],
+      psiFetch,
+    });
+    const svc = service(deps);
+
+    await svc.run(AUDIT_ID);
+
+    // The row passed to db.insert().values() should carry the provenance fields.
+    const insertedRows = deps.insertValues.mock.calls[0][0] as {
+      isOriginFallback: boolean;
+      cwvSource: string;
+    }[];
+    expect(insertedRows).toHaveLength(2); // mobile + desktop
+    for (const row of insertedRows) {
+      expect(row.isOriginFallback).toBe(true);
+      expect(row.cwvSource).toBe('field');
+    }
   });
 });

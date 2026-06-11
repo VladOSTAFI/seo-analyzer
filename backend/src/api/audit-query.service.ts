@@ -2,9 +2,11 @@ import { Inject, Injectable } from '@nestjs/common';
 import { sql, type SQL } from 'drizzle-orm';
 import type { AuthUser } from '../auth/auth.types';
 import { DB, type Database } from '../db/db.types';
+import { distinctIssueCount } from '../report/report.summary';
 import type {
   AuditDetailDto,
   AuditDto,
+  Confidence,
   FindingDto,
   FindingsQuery,
   PageParams,
@@ -12,6 +14,7 @@ import type {
   Severity,
   SeverityCounts,
 } from './api.types';
+import type { CoverageManifest } from '../report/report.types';
 
 /**
  * Read-side query service for the REST API (Phase 7). Owns every audit/finding
@@ -86,12 +89,18 @@ export class AuditQueryService {
    * (Phase A3 owner-scoping; admin sees all). The not-visible and missing cases
    * are indistinguishable on purpose so the controller maps both to 404 without
    * leaking existence (AUTHORIZATION_PLAN §8).
+   *
+   * Also surfaces `progress`, `coverage`, and `distinctIssues` (Items 14/12/13).
+   * `distinctIssues` is computed in Node over the loaded severity rows — findings
+   * are fetched in full only for this light aggregation; the column set is minimal
+   * (ruleId + url only) to keep the query cheap.
    */
   async getAudit(id: string, user: AuthUser): Promise<AuditDetailDto | undefined> {
     const scope = this.ownerScope(user);
 
     const auditResult = await this.db.execute(sql`
-      select id, start_url, status, failed_stage, report_path, created_at, updated_at
+      select id, start_url, status, failed_stage, report_path, progress, coverage,
+             created_at, updated_at
       from audits
       where id = ${id} and ${scope}
       limit 1
@@ -121,7 +130,35 @@ export class AuditQueryService {
       findingsTotal += count;
     }
 
-    return { ...this.toAuditDto(auditRow), findingsTotal, bySeverity };
+    // Item 13: compute distinctIssues from a lightweight findings query
+    // (ruleId + url only — no detail column needed).
+    const findingsForDistinct = await this.db.execute(sql`
+      select rule_id, url
+      from findings
+      where audit_id = ${id}
+    `);
+    const distinctIssues = distinctIssueCount(
+      findingsForDistinct.rows.map((r) => ({
+        ruleId: r.rule_id as string,
+        severity: 'info' as Severity, // placeholder — distinctIssueCount doesn't use severity
+        confidence: 'high' as Confidence, // placeholder — distinctIssueCount doesn't use confidence
+        url: (r.url as string | null) ?? null,
+        detail: {},
+      })),
+    );
+
+    // Item 14 / 12: progress and coverage from the audit row.
+    const progress = (auditRow.progress as { stage: string; startedAt: string } | null) ?? null;
+    const coverage = (auditRow.coverage as CoverageManifest | null) ?? null;
+
+    return {
+      ...this.toAuditDto(auditRow),
+      findingsTotal,
+      bySeverity,
+      progress,
+      coverage,
+      distinctIssues,
+    };
   }
 
   /**
@@ -174,7 +211,7 @@ export class AuditQueryService {
     `;
 
     const pageResult = await this.db.execute(sql`
-      select id, rule_id, severity, url, detail, created_at
+      select id, rule_id, severity, confidence, url, detail, created_at
       from findings
       where ${where}
       order by ${severityRank}, rule_id, url asc nulls last
@@ -193,6 +230,8 @@ export class AuditQueryService {
         id: row.id as string,
         ruleId: row.rule_id as string,
         severity: row.severity as Severity,
+        // Default to 'high' for pre-migration rows where confidence may be NULL.
+        confidence: ((row.confidence as Confidence | null) ?? 'high') as Confidence,
         url: (row.url as string | null) ?? null,
         // jsonb is already parsed into an object by the pg driver; null → {}.
         detail: (row.detail as Record<string, unknown> | null) ?? {},

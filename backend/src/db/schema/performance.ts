@@ -1,4 +1,5 @@
 import {
+  boolean,
   integer,
   jsonb,
   pgTable,
@@ -53,6 +54,16 @@ export const performance = pgTable(
     speedIndexMs: integer('speed_index_ms'),
 
     usabilityFlags: jsonb('usability_flags').$type<string[]>().default([]),
+
+    // Provenance of the Core Web Vitals numbers above. When PSI has no
+    // page-level CrUX it returns ORIGIN-level aggregates in the same shape, so
+    // identical CWV tuples get written to every page. `isOriginFallback` records
+    // that, and `cwvSource` records whether the CWV came from CrUX field data,
+    // the Lighthouse lab run, or were absent — so rules can collapse origin-level
+    // data into one site-level finding and lower its confidence.
+    isOriginFallback: boolean('is_origin_fallback').notNull().default(false),
+    cwvSource: text('cwv_source'), // 'field' | 'lab' | 'none'
+
     psiRaw: jsonb('psi_raw'), // full API response
     fetchedAt: timestamp('fetched_at').notNull().defaultNow(),
   },

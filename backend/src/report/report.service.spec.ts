@@ -1,4 +1,4 @@
-import type { Severity } from '../analyze/rule.types';
+import type { Confidence, Severity } from '../analyze/rule.types';
 import type { FindingRow, ReportContext, ReportSection } from './report.types';
 import {
   SEVERITY_FILL_ARGB,
@@ -12,12 +12,19 @@ import {
   buildOtherRows,
   buildSummaryRows,
   countBySeverity,
+  countLowConfidence,
+  distinctIssueCount,
   zeroBySeverity,
 } from './report.summary';
 
 /** Minimal finding factory for the pure builder/format unit tests. */
-function f(ruleId: string, severity: Severity, url: string | null = null): FindingRow {
-  return { ruleId, severity, url, detail: {} };
+function f(
+  ruleId: string,
+  severity: Severity,
+  url: string | null = null,
+  confidence: Confidence = 'high',
+): FindingRow {
+  return { ruleId, severity, confidence, url, detail: {} };
 }
 
 const CTX: ReportContext = {
@@ -82,6 +89,205 @@ describe('report.summary counts', () => {
   });
 });
 
+// ── countLowConfidence ────────────────────────────────────────────────────────
+
+describe('countLowConfidence', () => {
+  it('returns 0 when all findings have high confidence', () => {
+    expect(countLowConfidence([f('a.one', 'high'), f('b.one', 'medium')])).toBe(0);
+  });
+
+  it('counts findings whose confidence is medium or low (not high)', () => {
+    const findings: FindingRow[] = [
+      f('a.one', 'high', null, 'high'),
+      f('b.one', 'high', null, 'medium'),
+      f('c.one', 'high', null, 'low'),
+      f('d.one', 'high', null, 'low'),
+    ];
+    // medium + low + low = 3 non-high
+    expect(countLowConfidence(findings)).toBe(3);
+  });
+
+  it('returns 0 for an empty array', () => {
+    expect(countLowConfidence([])).toBe(0);
+  });
+});
+
+// ── Item 13: distinctIssueCount ───────────────────────────────────────────────
+//
+// Rule family = first two dotted segments:
+//   meta.h1.missing   → meta.h1
+//   meta.h1.duplicate → meta.h1   (same family → collapses on same url)
+//   meta.title.missing → meta.title
+//   perf.lcp          → perf.lcp  (only 2 segments → IS the full family)
+//   perf.cls-inp      → perf.cls-inp (different from perf.lcp)
+//   mirror.main-mirror → mirror.main-mirror
+//   dupe.content      → dupe.content
+
+describe('distinctIssueCount (Item 13)', () => {
+  it('counts each unique (ruleFamily, url) pair once', () => {
+    const findings: FindingRow[] = [
+      {
+        ruleId: 'meta.title.missing',
+        severity: 'high',
+        confidence: 'high',
+        url: 'https://x.test/a',
+        detail: {},
+      },
+      {
+        ruleId: 'meta.title.missing',
+        severity: 'high',
+        confidence: 'high',
+        url: 'https://x.test/b',
+        detail: {},
+      },
+      {
+        ruleId: 'meta.h1.missing',
+        severity: 'medium',
+        confidence: 'high',
+        url: 'https://x.test/a',
+        detail: {},
+      },
+    ];
+    // meta.title × /a, meta.title × /b, meta.h1 × /a → 3 distinct
+    expect(distinctIssueCount(findings)).toBe(3);
+  });
+
+  it('collapses H1 sub-rules (same meta.h1 family) on the same url into ONE distinct issue', () => {
+    const url = 'https://x.test/page';
+    const findings: FindingRow[] = [
+      { ruleId: 'meta.h1.missing', severity: 'high', confidence: 'high', url, detail: {} },
+      { ruleId: 'meta.h1.duplicate', severity: 'medium', confidence: 'high', url, detail: {} },
+      { ruleId: 'meta.h1.multiple', severity: 'medium', confidence: 'high', url, detail: {} },
+    ];
+    // All three share family 'meta.h1' AND the same url → 1 distinct issue.
+    expect(distinctIssueCount(findings)).toBe(1);
+  });
+
+  it('perf rules with 2-segment IDs each have their own family (NOT collapsed)', () => {
+    // perf.lcp → family 'perf.lcp'; perf.cls-inp → family 'perf.cls-inp' etc.
+    // These are DIFFERENT families even on the same URL.
+    const url = 'https://x.test/slow';
+    const findings: FindingRow[] = [
+      { ruleId: 'perf.lcp', severity: 'high', confidence: 'high', url, detail: {} },
+      { ruleId: 'perf.cls-inp', severity: 'medium', confidence: 'high', url, detail: {} },
+      { ruleId: 'perf.lab-score', severity: 'medium', confidence: 'high', url, detail: {} },
+    ];
+    // Each is a distinct family → 3 distinct issues.
+    expect(distinctIssueCount(findings)).toBe(3);
+  });
+
+  it('same perf rule on the same url only counts once regardless of repetition', () => {
+    // Two separate findings for the same (perf.lcp, url) → 1 distinct issue.
+    const url = 'https://x.test/slow';
+    const findings: FindingRow[] = [
+      { ruleId: 'perf.lcp', severity: 'high', confidence: 'high', url, detail: {} },
+      { ruleId: 'perf.lcp', severity: 'medium', confidence: 'high', url, detail: {} }, // duplicate family+url
+    ];
+    expect(distinctIssueCount(findings)).toBe(1);
+  });
+
+  it('H1 rules on DIFFERENT urls are separate distinct issues', () => {
+    const findings: FindingRow[] = [
+      {
+        ruleId: 'meta.h1.missing',
+        severity: 'high',
+        confidence: 'high',
+        url: 'https://x.test/1',
+        detail: {},
+      },
+      {
+        ruleId: 'meta.h1.missing',
+        severity: 'high',
+        confidence: 'high',
+        url: 'https://x.test/2',
+        detail: {},
+      },
+      {
+        ruleId: 'meta.h1.duplicate',
+        severity: 'medium',
+        confidence: 'high',
+        url: 'https://x.test/1',
+        detail: {},
+      },
+    ];
+    // meta.h1 × /1 and meta.h1 × /2 → 2 distinct issues.
+    expect(distinctIssueCount(findings)).toBe(2);
+  });
+
+  it('site-wide (url=null) findings use a stable placeholder key per family', () => {
+    const findings: FindingRow[] = [
+      { ruleId: 'mirror.main-mirror', severity: 'high', confidence: 'high', url: null, detail: {} },
+      {
+        ruleId: 'mirror.trailing-slash',
+        severity: 'medium',
+        confidence: 'high',
+        url: null,
+        detail: {},
+      },
+    ];
+    // mirror.main-mirror and mirror.trailing-slash have DIFFERENT families (2-segment IDs).
+    expect(distinctIssueCount(findings)).toBe(2);
+
+    // Same family, same null url → 1 distinct.
+    const sameFamilyNullUrl: FindingRow[] = [
+      { ruleId: 'mirror.main-mirror', severity: 'high', confidence: 'high', url: null, detail: {} },
+      {
+        ruleId: 'mirror.main-mirror',
+        severity: 'medium',
+        confidence: 'high',
+        url: null,
+        detail: {},
+      },
+    ];
+    expect(distinctIssueCount(sameFamilyNullUrl)).toBe(1);
+  });
+
+  it('returns 0 for an empty findings array', () => {
+    expect(distinctIssueCount([])).toBe(0);
+  });
+
+  it('headline scenario: 305 raw findings reduce to fewer distinct issues via H1 collapsing', () => {
+    // 300 pages each with a single meta.h1.missing → 300 distinct (meta.h1 × each url)
+    const h1Findings: FindingRow[] = Array.from({ length: 300 }, (_, i) => ({
+      ruleId: 'meta.h1.missing',
+      severity: 'high' as Severity,
+      confidence: 'high' as Confidence,
+      url: `https://x.test/${i}`,
+      detail: {},
+    }));
+    // One page with BOTH meta.h1.missing AND meta.h1.duplicate:
+    // → same family meta.h1 + same url → still 1 distinct (collapses with /0)
+    const h1ExtraOnFirst: FindingRow[] = [
+      {
+        ruleId: 'meta.h1.duplicate',
+        severity: 'medium',
+        confidence: 'high',
+        url: 'https://x.test/0',
+        detail: {},
+      },
+    ];
+    // 1 dupe.content finding (different family)
+    const dupeFindings: FindingRow[] = [
+      {
+        ruleId: 'dupe.content',
+        severity: 'medium',
+        confidence: 'high',
+        url: 'https://x.test/dup',
+        detail: {},
+      },
+    ];
+
+    const all = [...h1Findings, ...h1ExtraOnFirst, ...dupeFindings];
+    // meta.h1 × 300 unique urls + dupe.content × 1 = 301 distinct
+    // (the extra h1.duplicate on /0 collapses with h1.missing on /0)
+    expect(distinctIssueCount(all)).toBe(301);
+    // But raw total = 300 + 1 + 1 = 302 findings.
+    expect(all.length).toBe(302);
+    // Distinct < raw, demonstrating the dedup value.
+    expect(distinctIssueCount(all)).toBeLessThan(all.length);
+  });
+});
+
 describe('buildSummaryRows', () => {
   const findings = [
     f('a.one', 'critical', 'https://x.test/1'),
@@ -91,13 +297,16 @@ describe('buildSummaryRows', () => {
   ];
   const rows = buildSummaryRows(findings, SECTIONS, CTX);
 
-  it('stamps the audit metadata block', () => {
+  it('stamps the audit metadata block including total findings and distinct issues', () => {
     const byField = (field: string) => rows.find((r) => r.field === field);
     expect(byField('Start URL')?.value).toBe('https://x.test');
     expect(byField('Audit ID')?.value).toBe('aud-1');
     expect(byField('Status')?.value).toBe('reporting');
     expect(byField('Generated at')?.value).toBe('2026-06-02T00:00:00.000Z');
     expect(byField('Total findings')?.count).toBe(4);
+    // Item 13: distinct issues row is present.
+    expect(byField('Distinct issues')).toBeDefined();
+    expect(typeof byField('Distinct issues')?.count).toBe('number');
   });
 
   it('emits a per-severity count row for every severity', () => {
@@ -121,6 +330,55 @@ describe('buildSummaryRows', () => {
     expect(other?.count).toBe(1);
     expect(other?.value).toBe('medium');
   });
+
+  it('Item 13: distinct issues collapses same-family same-url H1 findings', () => {
+    // Two H1 rules on the same URL → 1 distinct issue, 2 raw findings.
+    const h1Findings: FindingRow[] = [
+      {
+        ruleId: 'meta.h1.missing',
+        severity: 'high',
+        confidence: 'high',
+        url: 'https://x.test/p1',
+        detail: {},
+      },
+      {
+        ruleId: 'meta.h1.duplicate',
+        severity: 'medium',
+        confidence: 'high',
+        url: 'https://x.test/p1',
+        detail: {},
+      },
+    ];
+    // Same family 'meta.h1', same url → 1 distinct issue even though 2 raw findings.
+    expect(distinctIssueCount(h1Findings)).toBe(1);
+
+    const summaryRows = buildSummaryRows(h1Findings, SECTIONS, CTX);
+    const totalRow = summaryRows.find((r) => r.field === 'Total findings');
+    const distinctRow = summaryRows.find((r) => r.field === 'Distinct issues');
+    // Raw total is 2 findings, but distinct is 1.
+    expect(totalRow?.count).toBe(2);
+    expect(distinctRow?.count).toBe(1);
+  });
+
+  it('emits a Low-confidence findings summary row that counts non-high confidence findings', () => {
+    // All 4 findings have high confidence (default from f()), so count = 0.
+    const lowConfRow = rows.find((r) => r.field === 'Low-confidence findings');
+    expect(lowConfRow).toBeDefined();
+    expect(lowConfRow?.count).toBe(0);
+  });
+
+  it('Low-confidence findings count increments for medium/low confidence findings', () => {
+    const mixedFindings: FindingRow[] = [
+      f('a.one', 'high', 'https://x.test/1', 'high'),
+      f('a.two', 'medium', 'https://x.test/2', 'low'), // low confidence
+      f('b.one', 'medium', 'https://x.test/3', 'medium'), // medium confidence
+      f('b.two', 'low', 'https://x.test/4', 'high'), // high confidence (despite low severity)
+    ];
+    const summaryRows = buildSummaryRows(mixedFindings, SECTIONS, CTX);
+    const lowConfRow = summaryRows.find((r) => r.field === 'Low-confidence findings');
+    // 'low' + 'medium' confidence findings → 2
+    expect(lowConfRow?.count).toBe(2);
+  });
 });
 
 describe('buildOtherRows', () => {
@@ -131,6 +389,7 @@ describe('buildOtherRows', () => {
       {
         ruleId: 'z.unknown',
         severity: 'medium' as Severity,
+        confidence: 'high' as Confidence,
         url: 'https://x.test/9',
         detail: { b: 2, a: 1 },
       },

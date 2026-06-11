@@ -98,7 +98,11 @@ export class AnalyzeService {
               rows.push({
                 auditId,
                 ruleId: rule.id,
-                severity: rule.severity,
+                // Per-finding override wins over the rule's static default, so a
+                // single rule can grade rows differently (e.g. mobile perf flags
+                // escalated over desktop) without splitting into two rules.
+                severity: f.severity ?? rule.severity,
+                confidence: f.confidence ?? rule.confidence ?? 'high',
                 url: f.url,
                 detail: f.detail ?? {},
               });

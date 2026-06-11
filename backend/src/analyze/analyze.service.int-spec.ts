@@ -21,6 +21,10 @@ import {
  * With Wave-1 STUB rules every `run()` returns [], so we expect zero findings —
  * the value here is exercising the transaction/guard/summary plumbing, not rule
  * SQL. Wave 2's per-rule specs assert real findings via the same harness.
+ *
+ * Rule count baseline (RULE_EXTERNAL_FLAG_ENABLED off, which is the default):
+ *   30 rules — perf.mobile-indexing removed (replaced by per-finding severity in
+ *   perf.psi-usability), perf.lab-score added, links.external-flag conditional/off.
  */
 describe('AnalyzeService (integration)', () => {
   const db = getDb() as unknown as Database;
@@ -44,7 +48,7 @@ describe('AnalyzeService (integration)', () => {
     const summary = await service.analyze(auditId);
 
     expect(summary.rulesRun).toBe(RULES.length);
-    expect(summary.rulesRun).toBe(31);
+    expect(summary.rulesRun).toBe(30);
     expect(summary.failedRules).toEqual([]);
     expect(summary.totalFindings).toBe(0);
     expect(summary.bySeverity).toEqual({

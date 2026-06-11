@@ -6,6 +6,7 @@ import type {
   ReportSection,
   SheetRow,
 } from './report.types';
+import { ruleFamily } from './report.sections';
 
 /**
  * Phase 5 Summary + catch-all builders (engine-owned, Wave 2A). PURE: plain
@@ -30,6 +31,42 @@ export function countBySeverity(findings: FindingRow[]): Record<Severity, number
     if (f.severity in counts) counts[f.severity] += 1;
   }
   return counts;
+}
+
+/**
+ * Count findings whose confidence is not 'high' (i.e. estimated / unverified).
+ * This includes both 'medium' and 'low' confidence findings. Surfaced on the
+ * Summary sheet so a reader can see how much of the report is estimated data.
+ */
+export function countLowConfidence(findings: FindingRow[]): number {
+  return findings.filter((f) => f.confidence !== 'high').length;
+}
+
+/**
+ * Compute the de-duplicated issue count (Item 13).
+ *
+ * Groups findings by (ruleFamily, rootCauseKey) to collapse:
+ *  - H1 family (meta.h1.*): for a given URL all meta.h1.* findings count as ONE
+ *    issue (one page has an H1 problem, regardless of how many sub-rules fired).
+ *  - Perf rollups (perf.*): each page+strategy combination counts as ONE issue
+ *    per rule family, collapsing perf.lcp + perf.cls-inp + perf.lab-score etc. on
+ *    the same page into a single "page has a perf issue" entry per URL.
+ *  - All other rules: each (ruleFamily, url) pair is ONE distinct issue.
+ *
+ * "root-cause key" = `url ?? '(site-wide)'`. This ensures two pages with
+ * different URLs that both trigger `meta.title.duplicate` count as 2 distinct
+ * issues (different pages have different duplicate-title issues).
+ *
+ * Returns the count of unique (family, rootCauseKey) pairs.
+ */
+export function distinctIssueCount(findings: FindingRow[]): number {
+  const seen = new Set<string>();
+  for (const f of findings) {
+    const family = ruleFamily(f.ruleId);
+    const rootKey = f.url ?? '(site-wide)';
+    seen.add(`${family}\0${rootKey}`);
+  }
+  return seen.size;
 }
 
 /** The fixed column spec for the Summary sheet's key/value + table layout. */
@@ -59,7 +96,9 @@ export const OTHER_SHEET_NAME = 'Other';
  * Build the Summary sheet rows from the loaded findings + section registry +
  * context. Three stacked blocks, separated by blank rows:
  *
- *  1. Audit metadata: start URL, audit id, status, generated-at, total findings.
+ *  1. Audit metadata: start URL, audit id, status, generated-at, total findings,
+ *     the de-duplicated issue count (Item 13), and the low-confidence findings
+ *     count (findings where confidence !== 'high').
  *  2. Per-severity table: one row per severity (critical→info) with its count.
  *  3. Per-category table: one row per section (`spec.name`) with its finding
  *     count and dominant severity (highest severity present, blank if none).
@@ -74,6 +113,8 @@ export function buildSummaryRows(
 ): SheetRow[] {
   const rows: SheetRow[] = [];
   const bySeverity = countBySeverity(findings);
+  const distinctIssues = distinctIssueCount(findings);
+  const lowConfidenceCount = countLowConfidence(findings);
 
   // ── Block 1: audit metadata ───────────────────────────────────────────────
   rows.push({ field: 'Start URL', value: ctx.audit.startUrl, count: null });
@@ -81,6 +122,10 @@ export function buildSummaryRows(
   rows.push({ field: 'Status', value: ctx.audit.status, count: null });
   rows.push({ field: 'Generated at', value: ctx.generatedAt.toISOString(), count: null });
   rows.push({ field: 'Total findings', value: '', count: findings.length });
+  // Item 13: distinct issues = unique (ruleFamily, rootCauseKey) pairs.
+  rows.push({ field: 'Distinct issues', value: '', count: distinctIssues });
+  // Low-confidence findings: findings where confidence !== 'high' (estimated/unverified).
+  rows.push({ field: 'Low-confidence findings', value: '', count: lowConfidenceCount });
 
   // ── Block 2: per-severity table ───────────────────────────────────────────
   rows.push(blankRow());

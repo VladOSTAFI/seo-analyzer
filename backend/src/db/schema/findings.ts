@@ -1,6 +1,6 @@
 import { index, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 import { audits } from './audits';
-import { severity } from './enums';
+import { confidence, severity } from './enums';
 
 /**
  * Output of the analysis engine (Phase 3) — one row per detected issue.
@@ -23,6 +23,10 @@ export const findings = pgTable(
       .references(() => audits.id, { onDelete: 'cascade' }),
     ruleId: text('rule_id').notNull(), // e.g. "meta.title.duplicate"
     severity: severity('severity').notNull(),
+    // How directly the signal was measured. Defaults to 'high' (directly
+    // observed); rules lower it for estimated/unverified data (origin-level
+    // CrUX, un-probed external links). Orthogonal to severity.
+    confidence: confidence('confidence').notNull().default('high'),
     url: text('url'), // affected URL (nullable for site-wide findings)
     detail: jsonb('detail').$type<Record<string, unknown>>().default({}),
     createdAt: timestamp('created_at').notNull().defaultNow(),

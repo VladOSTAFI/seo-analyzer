@@ -21,6 +21,8 @@ describe('RefreshBody', () => {
   });
 
   it('rejects an extra field (strict)', () => {
-    expect(RefreshBody.safeParse({ refreshToken: 'opaque-token', userId: 'x' }).success).toBe(false);
+    expect(RefreshBody.safeParse({ refreshToken: 'opaque-token', userId: 'x' }).success).toBe(
+      false,
+    );
   });
 });

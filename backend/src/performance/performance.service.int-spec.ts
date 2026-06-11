@@ -42,6 +42,8 @@ describe('PerformanceService (integration)', () => {
         tbtMs: 250,
         speedIndexMs: 3000,
         usabilityFlags: ['unsized-images'],
+        cwvSource: 'field',
+        isOriginFallback: false,
         raw: { url, strategy },
       };
     },
@@ -140,6 +142,10 @@ describe('PerformanceService (integration)', () => {
     expect(sample.lcpMs).toBe(4000);
     expect(sample.performanceScore).toBeCloseTo(55);
     expect(sample.usabilityFlags).toEqual(['unsized-images']);
+
+    // Provenance fields are persisted.
+    expect(sample.cwvSource).toBe('field');
+    expect(sample.isOriginFallback).toBe(false);
 
     // Findings count is non-negative (perf rules may still be Agent C stubs).
     expect(summary.findings).toBeGreaterThanOrEqual(0);

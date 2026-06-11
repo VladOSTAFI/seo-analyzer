@@ -4,9 +4,9 @@ import type { Finding, Rule } from '../../rule.types';
 /**
  * `dupe.content` — Duplicate pages by content hash.
  *
- * Severity: high.
+ * Severity: high. HTML pages only (content-type gated).
  *
- * SQL mechanism: an inner aggregate over fetched 2xx pages with a non-null
+ * SQL mechanism: an inner aggregate over fetched 2xx HTML pages with a non-null
  * `content_hash` (`GROUP BY content_hash HAVING count(*) > 1`) identifies the
  * shared hashes; joining that back to the page rows emits ONE finding per page
  * that participates in a duplicate group. `duplicateCount` is the size of the
@@ -28,12 +28,14 @@ export const dupeContentRule: Rule = {
         from pages
         where audit_id = ${auditId}
           and status_class = '2xx'
+          and (content_type is null or content_type like 'text/html%')
           and content_hash is not null
         group by content_hash
         having count(*) > 1
       ) g on g.content_hash = p.content_hash
       where p.audit_id = ${auditId}
         and p.status_class = '2xx'
+        and (p.content_type is null or p.content_type like 'text/html%')
         and p.content_hash is not null
       order by p.url
     `);

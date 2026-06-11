@@ -1,4 +1,5 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
+import { sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.types';
 import { audits } from '../db/schema';
 import { CrawlService } from '../crawl/crawl.service';
@@ -9,6 +10,12 @@ import { ReportService } from '../report/report.service';
 import { buildAuditPayload, parseStartUrl } from '../cli/create.command';
 import { AuditRepository } from './audit.repository';
 import type { RunResult } from '../run/run.types';
+import type { CrawlSummary } from '../crawl/crawl.types';
+import type { EnrichSummary } from '../enrich/enrich.types';
+import type { AnalyzeSummary } from '../analyze/analyze.types';
+import type { PerformanceSummary } from '../performance/performance.types';
+import type { CoverageManifest } from '../report/report.types';
+import { RULES } from '../analyze/rule.registry';
 
 /** The canonical stage names used for `failedStage` + progress logs. */
 type StageName = 'crawl' | 'enrich' | 'analyze' | 'perf' | 'report';
@@ -38,6 +45,14 @@ type StageName = 'crawl' | 'enrich' | 'analyze' | 'perf' | 'report';
  *    orchestrator's per-stage wrapper ALSO calls `markFailed(auditId, <stage>)`
  *    (idempotent — safe even if the stage already set it), logs the stage
  *    context, then RETHROWS so subsequent stages do NOT run.
+ *
+ * PROGRESS (Item 14): at the START of each stage `audits.progress` is written
+ * with `{ stage, startedAt }` so a polling client can distinguish the long PSI
+ * stage from analysis. Best-effort — a DB hiccup here never aborts the pipeline.
+ *
+ * COVERAGE (Item 12): at the END of runAll a consolidated coverage manifest is
+ * assembled from the stage summaries and lightweight COUNT queries, then
+ * persisted to `audits.coverage`. Best-effort.
  */
 @Injectable()
 export class AuditService {
@@ -140,6 +155,9 @@ export class AuditService {
    * and stops the pipeline (subsequent stages do NOT run). After report succeeds
    * the orchestrator owns the terminal `done` transition and logs a final
    * pipeline summary.
+   *
+   * At the START of each stage `audits.progress` is written (best-effort).
+   * At the END, a coverage manifest is assembled and persisted (best-effort).
    */
   async runAll(auditId: string): Promise<RunResult> {
     const startedAt = Date.now();
@@ -182,6 +200,12 @@ export class AuditService {
       (s) => `sheets=${s.sheets} findings=${s.totalFindings} report=${s.reportPath}`,
     );
 
+    // ── Item 12: assemble and persist coverage manifest (best-effort) ──────────
+    await this.persistCoverage(auditId, crawl, enrich, analyze, performance).catch((err) => {
+      const reason = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`Coverage persist failed audit=${auditId}: ${reason}`);
+    });
+
     // The ONLY status this orchestrator owns: report left it at `reporting`.
     await this.auditRepo.setStatus(auditId, 'done');
 
@@ -204,11 +228,101 @@ export class AuditService {
   }
 
   /**
-   * Run one stage: log start, time the call, log done with the stage's key counts
-   * (via `describe`), and on any throw mark the audit failed at this stage
-   * (idempotent — the stage may have already marked it), log the stage context +
-   * reason, then RETHROW so the pipeline stops. Centralizes the try/catch so it
-   * is not repeated five times.
+   * Assemble the coverage manifest from stage summaries and a lightweight COUNT
+   * query for CWV source distribution and per-rule finding counts (to detect
+   * inert rules = registered rules with 0 findings).
+   *
+   * Reads `enrich` fields defensively (optional chaining + fallbacks) so this
+   * compiles whether or not the enrich agent has added the new fields yet.
+   */
+  private async persistCoverage(
+    auditId: string,
+    crawl: CrawlSummary,
+    enrich: EnrichSummary,
+    analyze: AnalyzeSummary,
+    // CWV provenance is read directly from the performance table below, so the
+    // perf stage summary itself is not needed here (kept for signature symmetry).
+    _perf: PerformanceSummary,
+  ): Promise<void> {
+    // ── CWV source distribution from performance rows ────────────────────────
+    const cwvResult = await this.db.execute(sql`
+      select
+        count(*) filter (where cwv_source = 'field' and not is_origin_fallback)::int  as field_count,
+        count(*) filter (where cwv_source = 'field' and     is_origin_fallback)::int  as origin_count,
+        count(*) filter (where cwv_source = 'lab')::int                               as lab_count
+      from performance
+      where audit_id = ${auditId}
+    `);
+    const cwvRow = cwvResult.rows[0] ?? {};
+    const cwvSource = {
+      field: Number(cwvRow.field_count ?? 0),
+      originFallback: Number(cwvRow.origin_count ?? 0),
+      lab: Number(cwvRow.lab_count ?? 0),
+    };
+
+    // ── External links total ─────────────────────────────────────────────────
+    const extResult = await this.db.execute(sql`
+      select count(*)::int as total
+      from links
+      where audit_id = ${auditId} and type = 'external'
+    `);
+    const externalLinksTotal = Number(extResult.rows[0]?.total ?? 0);
+
+    // ── Images total (from crawl summary; status enriched from enrich summary)
+    // enrich.imagesResolved is the number of images whose status was resolved.
+    // Defensive access with fallback for mid-flight agent work.
+    const imagesStatusEnriched = (enrich as Partial<EnrichSummary>).imagesResolved ?? 0;
+
+    // Externals verified — another agent adds externalsVerified / imagesVerified
+    // to EnrichSummary; read defensively.
+    const externalsVerified =
+      (enrich as unknown as Record<string, unknown>).externalsVerified !== undefined
+        ? Number((enrich as unknown as Record<string, unknown>).externalsVerified)
+        : 0;
+
+    // ── Inert rules = rules with 0 findings ──────────────────────────────────
+    const allRuleIds = RULES.map((r) => r.id);
+    const byRule = analyze.byRule ?? {};
+    const rulesInert = allRuleIds.filter((id) => !byRule[id] || byRule[id] === 0);
+
+    // ── Crawl cap (defaults to 500 if not configured) ─────────────────────────
+    // We surface the cap as the configured or effective limit rather than a DB
+    // query — the crawl summary already exposes the count of pages crawled.
+    const crawlCap = Number(process.env.CRAWL_MAX_PAGES ?? 500);
+    const capHit = crawl.pages >= crawlCap;
+
+    const manifest: CoverageManifest = {
+      pagesCrawled: crawl.pages,
+      crawlCap,
+      capHit,
+      externalLinks: {
+        total: externalLinksTotal,
+        verified: externalsVerified,
+      },
+      images: {
+        total: crawl.images,
+        statusEnriched: imagesStatusEnriched,
+      },
+      cwvSource,
+      rulesInert,
+    };
+
+    await this.auditRepo.setCoverage(auditId, manifest as unknown as Record<string, unknown>);
+    this.logger.log(
+      `Coverage manifest persisted audit=${auditId} ` +
+        `pages=${manifest.pagesCrawled} inertRules=${manifest.rulesInert.length}`,
+    );
+  }
+
+  /**
+   * Run one stage: write progress (best-effort), log start, time the call, log
+   * done with the stage's key counts (via `describe`), and on any throw mark the
+   * audit failed at this stage (idempotent — the stage may have already marked
+   * it), log the stage context + reason, then RETHROW so the pipeline stops.
+   * Centralizes the try/catch so it is not repeated five times.
+   *
+   * Item 14: `audits.progress = { stage, startedAt }` is written at the START of
+   * each stage. Best-effort — a DB hiccup here never aborts the pipeline.
    */
   private async runStage<T>(
     name: StageName,
@@ -216,11 +330,17 @@ export class AuditService {
     fn: () => Promise<T>,
     describe: (summary: T) => string,
   ): Promise<T> {
-    const startedAt = Date.now();
+    // Item 14: write progress before the stage begins (best-effort).
+    await this.auditRepo.setProgress(auditId, name).catch((err) => {
+      const reason = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`setProgress(${name}) failed audit=${auditId}: ${reason}`);
+    });
+
+    const stageStartedAt = Date.now();
     this.logger.log(`Stage ${name} start audit=${auditId}`);
     try {
       const summary = await fn();
-      const elapsedMs = Date.now() - startedAt;
+      const elapsedMs = Date.now() - stageStartedAt;
       this.logger.log(
         `Stage ${name} done audit=${auditId} ${describe(summary)} durationMs=${elapsedMs}`,
       );
@@ -229,7 +349,7 @@ export class AuditService {
       // Idempotent safety net: guard errors throw BEFORE a stage's own markFailed.
       await this.auditRepo.markFailed(auditId, name);
       const reason = err instanceof Error ? err.message : String(err);
-      const elapsedMs = Date.now() - startedAt;
+      const elapsedMs = Date.now() - stageStartedAt;
       this.logger.error(
         `Stage ${name} failed audit=${auditId} stage=${name} durationMs=${elapsedMs}: ${reason}`,
       );

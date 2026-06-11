@@ -32,19 +32,27 @@ function scalarCount(result: { rows: Record<string, unknown>[] }): number {
  * and run inside ONE transaction, so a partial failure leaves the prior
  * enrichment intact and a re-run reproduces identical results (idempotent).
  *
- * AFTER that transaction commits, a **live broken-link verification pass**
- * ({@link LinkVerifierService}) re-checks every link flagged `is_broken = true`
- * with a fresh, browser-like HTTP request and clears the flag for false
- * positives (a page that momentarily 5xx'd under crawl load, or that blocks the
- * bot UA, but returns 200 to a real browser). This pass is run OUTSIDE the
- * transaction on purpose — holding a DB transaction open across many slow,
- * retrying network calls would pin a connection and risk lock/timeout problems.
- * Because it depends on live network responses it is NOT strictly idempotent
- * (two runs can disagree if the target's live status changed); that is a
- * deliberate, correct tradeoff — the pass exists precisely to reflect the
- * CURRENT live state rather than the frozen crawl snapshot. The pass is
- * best-effort: any failure inside it is caught and logged and does NOT fail
- * the enrich stage.
+ * AFTER that transaction commits, three **live verification/probe passes** run
+ * sequentially, each best-effort (never fails enrich):
+ *
+ * 1. **Broken-link verification** ({@link LinkVerifierService.verifyBrokenLinks}):
+ *    re-checks every `is_broken=true` internal link with a fresh browser-like
+ *    request to clear false positives. Gated by LINK_VERIFY_ENABLED.
+ *
+ * 2. **External-link probe** ({@link LinkVerifierService.probeExternalLinks}):
+ *    probes external hrefs whose `target_status_code` is still NULL (never
+ *    visited by the crawl). Populates `target_status_code` and `is_broken` so
+ *    the `links.broken-external` rule has live data. Gated by
+ *    EXTERNAL_VERIFY_ENABLED (default false).
+ *
+ * 3. **Image probe** ({@link LinkVerifierService.probeImages}):
+ *    probes image srcs whose `status_code` is still NULL. Populates
+ *    `images.status_code` so the `image.broken` rule has live data. Gated by
+ *    IMAGE_VERIFY_ENABLED (default false).
+ *
+ * All three passes run OUTSIDE the transaction (see the broken-link pass
+ * docblock for the rationale). Any failure in any pass is caught and logged; it
+ * cannot fail the enrich stage.
  *
  * Status semantics mirror Phase 1: status is set to `enriching` at the start and
  * LEFT at `enriching` on success — `enriching` is the settled "enriched" state
@@ -110,12 +118,27 @@ export class EnrichService {
         );
       }
 
+      // (4) External-link probe pass — probes external hrefs with NULL
+      // target_status_code so broken-external findings have live data.
+      // Best-effort; never throws. Gated by EXTERNAL_VERIFY_ENABLED.
+      const externalProbe = await this.linkVerifier.probeExternalLinks(auditId);
+      summary.externalsVerified = externalProbe.externalsVerified;
+      summary.externalsTruncated = externalProbe.truncated;
+
+      // (5) Image probe pass — probes image srcs with NULL status_code.
+      // Best-effort; never throws. Gated by IMAGE_VERIFY_ENABLED.
+      const imageProbe = await this.linkVerifier.probeImages(auditId);
+      summary.imagesVerified = imageProbe.imagesVerified;
+      summary.imagesTruncated = imageProbe.truncated;
+
       const elapsedMs = Date.now() - startedAt;
       this.logger.log(
         `Enrich done audit=${auditId} links=${summary.linksResolved} ` +
           `(redirect=${summary.redirectLinks}, broken=${summary.brokenLinks}) ` +
           `verified=${summary.linksVerified} false_positives_cleared=${summary.falsePositivesCleared} ` +
           `verify_inconclusive=${summary.verifyInconclusive} ` +
+          `externals_verified=${summary.externalsVerified} externals_truncated=${summary.externalsTruncated} ` +
+          `images_verified=${summary.imagesVerified} images_truncated=${summary.imagesTruncated} ` +
           `inlinked_pages=${summary.pagesWithInlinks} ` +
           `images=${summary.imagesResolved} hreflang_reciprocal=${summary.hreflangReciprocal} ` +
           `redirect_chains=${summary.redirectChainPages} loops=${summary.redirectLoopPages} ` +
@@ -210,11 +233,8 @@ export class EnrichService {
    * correct — e.g. an image URL that was itself queued and fetched). Reset then
    * set, mirroring link resolution, so it stays idempotent.
    *
-   * SEAM: a live HTTP HEAD-check pass over every image src (the usual way to
-   * surface broken images) is a deliberate future enhancement, NOT done here —
-   * Phase 2 is intentionally fully set-based per the plan headline. The log line
-   * below keeps that seam visible. (The link verifier introduces a comparable
-   * live-check, but only for links already flagged broken, not for images.)
+   * A live HTTP HEAD-check pass (IMAGE_VERIFY_ENABLED) is now a separate
+   * best-effort step run after this transaction — see {@link probeImages}.
    */
   private async resolveImageStatus(tx: Executor, auditId: string): Promise<void> {
     await tx.execute(sql`
@@ -230,9 +250,6 @@ export class EnrichService {
         and p.audit_id = i.audit_id
         and p.url = i.src
     `);
-    this.logger.log(
-      `image HEAD-check pass not implemented (set-based resolution only) audit=${auditId}`,
-    );
   }
 
   /**
@@ -247,6 +264,8 @@ export class EnrichService {
    * The verification counts (`linksVerified`/`falsePositivesCleared`/
    * `verifyInconclusive`) are filled in by the caller AFTER the live pass; here
    * they are seeded to zero so the summary is complete inside the transaction.
+   * Similarly, the external/image probe counts are seeded to zero here and filled
+   * in post-transaction.
    */
   private async collectSummary(tx: Executor, auditId: string): Promise<EnrichSummary> {
     const linksResolved = scalarCount(
@@ -313,6 +332,11 @@ export class EnrichService {
       linksVerified: 0,
       falsePositivesCleared: 0,
       verifyInconclusive: 0,
+      // Filled in post-transaction by the external/image probe passes.
+      externalsVerified: 0,
+      externalsTruncated: false,
+      imagesVerified: 0,
+      imagesTruncated: false,
     };
   }
 }

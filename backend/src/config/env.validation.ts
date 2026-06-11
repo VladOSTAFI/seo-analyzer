@@ -37,7 +37,9 @@ const boolWithDefault = (def: boolean) =>
   z
     .string()
     .optional()
-    .transform((v) => (v === undefined || v === '' ? (def ? 'true' : 'false') : v.trim().toLowerCase()))
+    .transform((v) =>
+      v === undefined || v === '' ? (def ? 'true' : 'false') : v.trim().toLowerCase(),
+    )
     .pipe(z.enum(['true', '1', 'yes', 'on', 'false', '0', 'no', 'off']))
     .transform((v) => v === 'true' || v === '1' || v === 'yes' || v === 'on');
 
@@ -91,6 +93,34 @@ export const envSchema = z.object({
   // Hard cap on distinct URLs verified per audit, so a pathological audit can't
   // fire unbounded requests. Truncation is logged.
   LINK_VERIFY_MAX: intWithDefault(500),
+
+  // --- External-link & image health verification (enrich, item 9). The crawl
+  // only resolves link targets that match a crawled page, so external links and
+  // image src are never probed and `links.broken-external` / `image.broken` are
+  // dead rules. These passes fix that — gated OFF by default (outbound volume)
+  // and best-effort (never fail enrich). Reuse the LINK_VERIFY_* pool/UA/timeout.
+  //
+  // Probe a sample of external link hrefs (HEAD, GET fallback) for liveness.
+  EXTERNAL_VERIFY_ENABLED: boolWithDefault(false),
+  // Probe image src (HEAD, GET fallback) to populate images.status_code.
+  IMAGE_VERIFY_ENABLED: boolWithDefault(false),
+  // Hard cap on distinct external/image URLs probed per audit.
+  EXTERNAL_VERIFY_MAX: intWithDefault(200),
+  // Per-host budget so one host can't dominate the probe set.
+  EXTERNAL_VERIFY_PER_HOST: intWithDefault(20),
+
+  // --- Analysis rule tuning ---
+  // `links.external-flag` fires for every external link missing rel=nofollow,
+  // which is rarely actionable (135 low findings on the reference audit). OFF by
+  // default; when on, the rule narrows to monetized-looking links (item 6).
+  RULE_EXTERNAL_FLAG_ENABLED: boolWithDefault(false),
+  // Prevalence threshold (0..1) for the perf flag rollup (item 5): when a PSI
+  // flag appears on ≥ this fraction of sampled pages for a strategy, emit ONE
+  // site-level finding instead of one per page.
+  PERF_FLAG_ROLLUP_PCT: floatWithDefault(0.6),
+  // `perf.lab-score` (item 11) flags pages whose Lighthouse performance score is
+  // below this (0..100). The only genuinely per-page perf signal.
+  PERF_LAB_SCORE_MIN: intWithDefault(90),
 
   // Report output directory (Phase 5).
   OUTPUT_DIR: z

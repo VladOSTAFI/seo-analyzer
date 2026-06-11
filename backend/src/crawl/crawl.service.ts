@@ -77,6 +77,56 @@ export function deriveStatusClass(statusCode: number): '2xx' | '3xx' | '4xx' | '
 }
 
 /**
+ * Classify a crawled resource into a `page_kind` enum value.
+ *
+ * Priority order (first match wins):
+ *  1. XML sitemap — crawl source 'sitemap', URL pattern, or XML content type
+ *     containing 'sitemap'.
+ *  2. RSS/Atom feed — feed-specific MIME types or URL pattern.
+ *  3. HTML — any content type starting with 'text/html' or 'application/xhtml+xml'.
+ *  4. Other — everything else (images, PDFs, JSON, etc.).
+ *
+ * Pure function: no side effects; exported so it can be unit-tested in isolation.
+ */
+export function classifyPageKind(
+  contentType: string | null,
+  crawlSource: FetchMeta['crawlSource'],
+  url: string,
+): 'html' | 'sitemap' | 'feed' | 'other' {
+  const ct = (contentType ?? '').toLowerCase();
+  const urlLower = url.toLowerCase();
+
+  // Sitemap: explicit source tag, URL pattern, or XML content type with 'sitemap'.
+  if (
+    crawlSource === 'sitemap' ||
+    /sitemap.*\.xml(\?|$|#)/i.test(urlLower) ||
+    (urlLower.includes('sitemap') && ct.includes('xml')) ||
+    ct.includes('sitemap')
+  ) {
+    return 'sitemap';
+  }
+
+  // Feed: RSS/Atom MIME types or feed-pattern URL.
+  if (
+    ct.startsWith('application/rss+xml') ||
+    ct.startsWith('application/atom+xml') ||
+    ct.startsWith('application/feed+json') ||
+    urlLower.includes('/feed') ||
+    urlLower.includes('/rss') ||
+    urlLower.endsWith('.rss')
+  ) {
+    return 'feed';
+  }
+
+  // HTML (and XHTML).
+  if (ct.startsWith('text/html') || ct.startsWith('application/xhtml+xml')) {
+    return 'html';
+  }
+
+  return 'other';
+}
+
+/**
  * Heuristic for whether a page looks JS-rendered (near-empty body or a known
  * SPA root container with no meaningful content). Phase 1 only logs this; it is
  * the seam where a Playwright escalation would plug in (see {@link CrawlService}).
@@ -124,6 +174,7 @@ export function toPageRow(auditId: string, collected: CollectedPage): NewPage {
     contentLengthBytes: meta.contentLengthBytes,
     depth: meta.depth,
     crawlSource: meta.crawlSource,
+    pageKind: classifyPageKind(meta.contentType, meta.crawlSource, meta.url),
     title: extracted.title,
     metaDescription: extracted.metaDescription,
     h1: extracted.h1,
@@ -255,6 +306,15 @@ export class CrawlService {
     const seedNorm = normalizeUrl(startUrl);
     depthByUrl.set(seedNorm, 0);
 
+    /**
+     * Per-request start timestamps for response-time measurement (Item 10).
+     * Keyed by request id (set in preNavigationHooks, consumed in requestHandler).
+     * CheerioCrawler does not expose per-request timing itself, so we bracket
+     * it manually: record Date.now() just before the request is dispatched, read
+     * it in the handler once the response body is available.
+     */
+    const requestStartTimes = new Map<string, number>();
+
     const logger = this.logger;
 
     // Per-run, in-memory storage: no filesystem persistence, no shared state.
@@ -279,12 +339,25 @@ export class CrawlService {
         maxRequestRetries: 2,
         additionalMimeTypes: ['text/html', 'application/xhtml+xml'],
         preNavigationHooks: [
-          (_ctx, gotOptions): void => {
+          (ctx, gotOptions): void => {
             gotOptions.headers = { ...gotOptions.headers, 'User-Agent': CRAWL_USER_AGENT };
+            // Record request start time keyed by the request's unique id so the
+            // handler can compute responseTimeMs = Date.now() - startTime.
+            const reqId = (ctx as { request?: { uniqueKey?: string } }).request?.uniqueKey;
+            if (reqId) {
+              requestStartTimes.set(reqId, Date.now());
+            }
           },
         ],
         requestHandler: async (ctx: CheerioCrawlingContext): Promise<void> => {
-          await this.handleRequest(ctx, { startUrl, seedNorm, seen, depthByUrl, collected });
+          await this.handleRequest(ctx, {
+            startUrl,
+            seedNorm,
+            seen,
+            depthByUrl,
+            collected,
+            requestStartTimes,
+          });
         },
         failedRequestHandler: ({ request }, error): void => {
           logger.warn(`Request failed url=${request.url}: ${error.message}`);
@@ -313,6 +386,11 @@ export class CrawlService {
    * Per-request handler: builds the {@link ExtractInput}, calls the extractor,
    * records the page, and enqueues internal links discovered by the extractor.
    * External links are recorded (as rows, later) but never enqueued.
+   *
+   * Response time (Item 10): the start timestamp recorded by the preNavigationHook
+   * is looked up via request.uniqueKey; if found, responseTimeMs is set to the
+   * integer ms elapsed since that timestamp. The Map entry is cleaned up to avoid
+   * unbounded growth across many requests.
    */
   private async handleRequest(
     ctx: CheerioCrawlingContext,
@@ -322,6 +400,7 @@ export class CrawlService {
       seen: Set<string>;
       depthByUrl: Map<string, number>;
       collected: CollectedPage[];
+      requestStartTimes: Map<string, number>;
     },
   ): Promise<void> {
     const { request, response, body } = ctx;
@@ -355,6 +434,13 @@ export class CrawlService {
         ? Number(contentLengthHeader)
         : Buffer.byteLength(html, 'utf8');
 
+    // Consume the start timestamp set by preNavigationHooks for this request.
+    const startTime = state.requestStartTimes.get(request.uniqueKey);
+    const responseTimeMs = startTime != null ? Math.max(0, Date.now() - startTime) : null;
+    if (startTime != null) {
+      state.requestStartTimes.delete(request.uniqueKey);
+    }
+
     // Playwright fallback SEAM (Phase 1: detect + log only; no browser launch).
     if (looksLikeSpaShell(html)) {
       this.logger.debug(`would escalate to Playwright (SPA shell) url=${finalUrl}`);
@@ -366,8 +452,7 @@ export class CrawlService {
       statusCode,
       redirectChain,
       contentType,
-      // CheerioCrawler does not surface a per-request timing; left null (best-effort).
-      responseTimeMs: null,
+      responseTimeMs,
       contentLengthBytes,
       depth,
       crawlSource,

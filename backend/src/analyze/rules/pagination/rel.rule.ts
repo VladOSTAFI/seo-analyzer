@@ -4,9 +4,9 @@ import type { Finding, Rule } from '../../rule.types';
 /**
  * `pagination.rel` — Broken/missing `rel=next/prev` reciprocity on paginated series.
  *
- * Severity: medium.
+ * Severity: medium. HTML pages only (content-type gated).
  *
- * SQL mechanism: scope to pages that are part of a pagination series (i.e.
+ * SQL mechanism: scope to HTML pages that are part of a pagination series (i.e.
  * `rel_next IS NOT NULL OR rel_prev IS NOT NULL`) and are themselves on 2xx.
  * For each such page `p` with a non-null `rel_next`, LEFT JOIN the crawled page
  * `nxt` at `nxt.url = p.rel_next`. We flag the page when its forward link is
@@ -37,6 +37,7 @@ export const paginationRelRule: Rule = {
         and nxt.status_class = '2xx'
       where p.audit_id = ${auditId}
         and p.status_class = '2xx'
+        and (p.content_type is null or p.content_type like 'text/html%')
         and (p.rel_next is not null or p.rel_prev is not null)
         and p.rel_next is not null
         and (

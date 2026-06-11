@@ -4,10 +4,10 @@ import type { Finding, Rule } from '../../rule.types';
 /**
  * `index.robots` — De-indexed pages that are nonetheless live (2xx).
  *
- * Severity: high.
+ * Severity: high. HTML pages only (content-type gated).
  *
  * A live page that is blocked from indexing is almost always a mistake. We flag
- * any fetched 2xx page that is suppressed by `<meta name=robots>` noindex, an
+ * any fetched 2xx HTML page that is suppressed by `<meta name=robots>` noindex, an
  * `X-Robots-Tag: noindex` header, or a robots.txt disallow. The three source
  * signals are selected as booleans in SQL; the human-readable `reason` is
  * composed in JS so multiple simultaneous causes surface together (e.g. both a
@@ -31,6 +31,7 @@ export const indexRobotsRule: Rule = {
       from pages p
       where p.audit_id = ${auditId}
         and p.status_class = '2xx'
+        and (p.content_type is null or p.content_type like 'text/html%')
         and (
           p.meta_robots ilike '%noindex%'
           or p.x_robots_tag ilike '%noindex%'

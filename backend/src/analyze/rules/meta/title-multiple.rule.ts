@@ -4,7 +4,7 @@ import type { Rule } from '../../rule.types';
 /**
  * `meta.title.multiple` — Page has more than one `<title>`.
  *
- * Severity: medium. Scoped to successfully-fetched (2xx) HTML pages only.
+ * Severity: medium. Scoped to successfully-fetched (2xx) HTML pages only (content-type gated).
  *
  * SQL mechanism: `jsonb_array_length(title) > 1`.
  */
@@ -18,6 +18,7 @@ export const metaTitleMultipleRule: Rule = {
       from pages
       where audit_id = ${auditId}
         and status_class = '2xx'
+        and (content_type is null or content_type like 'text/html%')
         and jsonb_array_length(title) > 1
       order by url
     `);

@@ -31,4 +31,32 @@ describe('meta.h1.missing (int)', () => {
 
     expect(findings).toEqual([{ url: 'https://t/missing', detail: {} }]);
   });
+
+  it('produces zero findings for non-HTML content types even when h1 is empty', async () => {
+    await seedPages(auditId, [
+      // XML sitemap with empty h1 — must be ignored
+      { url: 'https://t/sitemap.xml', statusClass: '2xx', contentType: 'application/xml', h1: [] },
+      // Atom feed with empty h1 — must be ignored
+      {
+        url: 'https://t/feed.atom',
+        statusClass: '2xx',
+        contentType: 'application/atom+xml',
+        h1: [],
+      },
+      // text/html with empty h1 — must still fire
+      {
+        url: 'https://t/html-missing',
+        statusClass: '2xx',
+        contentType: 'text/html; charset=utf-8',
+        h1: [],
+      },
+      // null content_type treated as HTML — must still fire
+      { url: 'https://t/null-ct', statusClass: '2xx', contentType: null, h1: [] },
+    ]);
+
+    const findings = await runRule(metaH1MissingRule, auditId);
+
+    const urls = findings.map((f) => f.url).sort();
+    expect(urls).toEqual(['https://t/html-missing', 'https://t/null-ct']);
+  });
 });
