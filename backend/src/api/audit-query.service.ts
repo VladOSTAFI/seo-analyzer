@@ -3,6 +3,7 @@ import { sql, type SQL } from 'drizzle-orm';
 import type { AuthUser } from '../auth/auth.types';
 import { DB, type Database } from '../db/db.types';
 import { distinctIssueCount } from '../report/report.summary';
+import { buildActions, topActions, toActionSummary } from '../report/report.actions';
 import type {
   AuditDetailDto,
   AuditDto,
@@ -14,7 +15,9 @@ import type {
   Severity,
   SeverityCounts,
 } from './api.types';
-import type { CoverageManifest } from '../report/report.types';
+import type { CoverageManifest, FindingRow } from '../report/report.types';
+import type { ScoreResult } from '../report/report.score';
+import type { ActionSummary } from './api.types';
 
 /**
  * Read-side query service for the REST API (Phase 7). Owns every audit/finding
@@ -99,7 +102,7 @@ export class AuditQueryService {
     const scope = this.ownerScope(user);
 
     const auditResult = await this.db.execute(sql`
-      select id, start_url, status, failed_stage, report_path, progress, coverage,
+      select id, start_url, status, failed_stage, report_path, progress, coverage, score,
              created_at, updated_at
       from audits
       where id = ${id} and ${scope}
@@ -130,26 +133,30 @@ export class AuditQueryService {
       findingsTotal += count;
     }
 
-    // Item 13: compute distinctIssues from a lightweight findings query
-    // (ruleId + url only — no detail column needed).
-    const findingsForDistinct = await this.db.execute(sql`
-      select rule_id, url
+    // Items 13 + plan 13: compute distinctIssues AND the Top-N actions from one
+    // lightweight findings query. Detail isn't needed for grouping/ranking, but
+    // severity + confidence ARE (groupByRootCause picks dominant severity and
+    // minimum confidence per group), so the query selects those four columns.
+    const findingsForGrouping = await this.db.execute(sql`
+      select rule_id, severity, confidence, url
       from findings
       where audit_id = ${id}
     `);
-    const distinctIssues = distinctIssueCount(
-      findingsForDistinct.rows.map((r) => ({
-        ruleId: r.rule_id as string,
-        severity: 'info' as Severity, // placeholder — distinctIssueCount doesn't use severity
-        confidence: 'high' as Confidence, // placeholder — distinctIssueCount doesn't use confidence
-        url: (r.url as string | null) ?? null,
-        detail: {},
-      })),
-    );
+    const groupingRows: FindingRow[] = findingsForGrouping.rows.map((r) => ({
+      ruleId: r.rule_id as string,
+      severity: r.severity as Severity,
+      confidence: ((r.confidence as Confidence | null) ?? 'high') as Confidence,
+      url: (r.url as string | null) ?? null,
+      detail: {},
+    }));
+    const distinctIssues = distinctIssueCount(groupingRows);
+    const actions = buildActions(groupingRows);
+    const topActionsSummary: ActionSummary[] = topActions(actions, 10).map(toActionSummary);
 
     // Item 14 / 12: progress and coverage from the audit row.
     const progress = (auditRow.progress as { stage: string; startedAt: string } | null) ?? null;
     const coverage = (auditRow.coverage as CoverageManifest | null) ?? null;
+    const score = (auditRow.score as ScoreResult | null) ?? null;
 
     return {
       ...this.toAuditDto(auditRow),
@@ -158,6 +165,8 @@ export class AuditQueryService {
       progress,
       coverage,
       distinctIssues,
+      score,
+      topActions: topActionsSummary,
     };
   }
 

@@ -1,5 +1,6 @@
 import { index, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 import { auditStatus } from './enums';
+import type { ScoreResult } from '../../report/report.score';
 import { users } from './users';
 
 /**
@@ -22,6 +23,9 @@ export const audits = pgTable(
     // skipped (externals verified, images probed, CWV source, inert rules) so
     // silent gaps become explicit "not assessed" statements in the report.
     coverage: jsonb('coverage').$type<Record<string, unknown>>(),
+    // SEO health score (plan 12) written at the report stage: overall + per-
+    // category 0–100 with formula inputs. Nullable; pre-report audits read null.
+    score: jsonb('score').$type<ScoreResult>(),
     // Phase A3 — the user who created this audit. NULLABLE on purpose for the
     // migration window: existing rows predate users and CLI-created audits have
     // no principal. Backfilled to a seeded admin and tightened to NOT NULL only

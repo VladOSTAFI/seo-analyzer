@@ -10,6 +10,8 @@ import { linksRedirectChainRule } from './rules/links/redirect-chain.rule';
 import { linksBrokenInternalRule } from './rules/links/broken-internal.rule';
 import { linksBrokenExternalRule } from './rules/links/broken-external.rule';
 import { linksExternalFlagRule } from './rules/links/external-flag.rule';
+import { linksAnchorQualityRule } from './rules/links/anchor-quality.rule';
+import { linksInternalNofollowRule } from './rules/links/internal-nofollow.rule';
 
 // meta.*
 import { metaTitleMissingRule } from './rules/meta/title-missing.rule';
@@ -32,6 +34,10 @@ import { dupeContentRule } from './rules/dupe/content.rule';
 import { indexCanonicalRule } from './rules/index/canonical.rule';
 import { indexRobotsRule } from './rules/index/robots.rule';
 import { indexUrlHeuristicsRule } from './rules/index/url-heuristics.rule';
+import { indexOrphanPageRule } from './rules/index/orphan-page.rule';
+import { indexClickDepthRule } from './rules/index/click-depth.rule';
+import { indexSignalConflictRule } from './rules/index/signal-conflict.rule';
+import { indexSoft404Rule } from './rules/index/soft-404.rule';
 
 // pagination.*
 import { paginationRelRule } from './rules/pagination/rel.rule';
@@ -84,6 +90,8 @@ export const RULES: Rule[] = [
   linksBrokenInternalRule,
   linksBrokenExternalRule,
   ...(externalFlagEnabled ? [linksExternalFlagRule] : []),
+  linksAnchorQualityRule,
+  linksInternalNofollowRule,
 
   // meta.*
   metaTitleMissingRule,
@@ -106,6 +114,10 @@ export const RULES: Rule[] = [
   indexCanonicalRule,
   indexRobotsRule,
   indexUrlHeuristicsRule,
+  indexOrphanPageRule,
+  indexClickDepthRule,
+  indexSignalConflictRule,
+  indexSoft404Rule,
 
   // pagination.*
   paginationRelRule,
