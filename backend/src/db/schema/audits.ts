@@ -4,6 +4,39 @@ import type { ScoreResult } from '../../report/report.score';
 import { users } from './users';
 
 /**
+ * Shape of the parsed robots.txt analysis persisted on the audit (feature 02).
+ * One robots.txt per site, so it lives on the audit row (not a child table).
+ * Null until the discovery pass runs (= not assessed).
+ */
+export interface RobotsAudit {
+  present: boolean;
+  reachable: boolean;
+  statusCode: number | null;
+  /** Global `Sitemap:` directive URLs (handed to the SitemapService, feature 03). */
+  sitemapUrls: string[];
+  groups: { userAgent: string; disallow: string[]; allow: string[] }[];
+  issues: {
+    kind:
+      | 'disallow-all'
+      | 'disallow-important'
+      | 'disallow-assets'
+      | 'unreachable'
+      | 'no-sitemap-directive';
+    detail: string;
+    severity: string;
+  }[];
+}
+
+/**
+ * Per-file sitemap validity summary persisted on the audit (feature 03). Null
+ * until the discovery pass runs. The per-URL rows live in `sitemap_entries`.
+ */
+export interface SitemapAudit {
+  files: { url: string; valid: boolean; urlCount: number; bytes: number; errors: string[] }[];
+  totalUrls: number;
+}
+
+/**
  * Root entity. One row per audit run; every other table FKs to audits.id.
  * Defined in Phase 0; child tables (pages, links, ...) arrive in later phases.
  */
@@ -26,6 +59,14 @@ export const audits = pgTable(
     // SEO health score (plan 12) written at the report stage: overall + per-
     // category 0–100 with formula inputs. Nullable; pre-report audits read null.
     score: jsonb('score').$type<ScoreResult>(),
+    // robots.txt audit (feature 02): present/reachable/status, declared Sitemap:
+    // directives, parsed user-agent groups, and the disallow-analysis issues the
+    // `robots.blocks-important` rule reads. Best-effort; null until the discovery
+    // pass runs (= not assessed → coverage manifest).
+    robotsAudit: jsonb('robots_audit').$type<RobotsAudit>(),
+    // XML sitemap audit (feature 03): per-file validity/url-count/bytes summary;
+    // the per-URL rows live in `sitemap_entries`. Best-effort; null until run.
+    sitemapAudit: jsonb('sitemap_audit').$type<SitemapAudit>(),
     // Phase A3 — the user who created this audit. NULLABLE on purpose for the
     // migration window: existing rows predate users and CLI-created audits have
     // no principal. Backfilled to a seeded admin and tightened to NOT NULL only

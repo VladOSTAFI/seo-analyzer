@@ -3,6 +3,8 @@ import type { Database } from '../db/db.types';
 import type { Env } from '../config/env.validation';
 import type { AuditRepository } from '../audit/audit.repository';
 import type { ExtractService } from './extract.service';
+import type { RobotsService } from './robots.service';
+import type { SitemapService } from './sitemap.service';
 import type { ExtractedPage } from './crawl.types';
 import {
   classifyPageKind,
@@ -32,7 +34,26 @@ function emptyExtracted(overrides: Partial<ExtractedPage> = {}): ExtractedPage {
     contentHash: null,
     links: [],
     images: [],
+    resources: [],
     hreflang: [],
+    structuredData: [],
+    ogData: null,
+    wordCount: 0,
+    htmlBytes: 0,
+    htmlLang: null,
+    charset: null,
+    hasViewport: false,
+    headingsOutline: [],
+    contentSimhash: null,
+    titlePx: null,
+    descPx: null,
+    security: {
+      hsts: null,
+      cspPresent: false,
+      xContentTypeOptions: null,
+      viewportContent: null,
+      mobileUsabilityIssues: [],
+    },
     ...overrides,
   };
 }
@@ -255,12 +276,21 @@ describe('row mappers', () => {
   it('toLinkRows records both internal and external links with rel passed through', () => {
     const extracted = emptyExtracted({
       links: [
-        { href: 'https://example.com/a', anchorText: 'A', type: 'internal', rel: [] },
+        {
+          href: 'https://example.com/a',
+          anchorText: 'A',
+          type: 'internal',
+          rel: [],
+          anchorIsBareImage: false,
+          imageAltMissing: false,
+        },
         {
           href: 'https://other.com/x',
           anchorText: 'X',
           type: 'external',
           rel: ['nofollow', 'sponsored'],
+          anchorIsBareImage: false,
+          imageAltMissing: false,
         },
       ],
     });
@@ -278,7 +308,18 @@ describe('row mappers', () => {
 
   it('toImageRows and toHreflangRows map onto pageUrl', () => {
     const extracted = emptyExtracted({
-      images: [{ src: 'https://example.com/i.png', alt: 'alt', title: null }],
+      images: [
+        {
+          src: 'https://example.com/i.png',
+          alt: 'alt',
+          title: null,
+          width: 800,
+          height: 600,
+          loading: 'lazy',
+          hasSrcset: true,
+          hasSizes: false,
+        },
+      ],
       hreflang: [{ lang: 'uk-UA', href: 'https://example.com/uk' }],
     });
     const c = collected({ finalUrl: 'https://example.com/p' }, extracted);
@@ -290,6 +331,11 @@ describe('row mappers', () => {
         src: 'https://example.com/i.png',
         alt: 'alt',
         title: null,
+        width: 800,
+        height: 600,
+        loading: 'lazy',
+        hasSrcset: true,
+        hasSizes: false,
       },
     ]);
     expect(toHreflangRows(AUDIT_ID, c)).toEqual([
@@ -330,6 +376,36 @@ describe('CrawlService.crawl', () => {
       SEO_SOFT404_ENABLED: true,
       SEO_SOFT404_MAX_WORDS: 50,
       LINK_GENERIC_ANCHORS: '',
+      SCHEMA_MAX_BLOCKS_PER_PAGE: 50,
+      SCHEMA_RAW_MAX_BYTES: 8192,
+      SEO_OG_IMAGE_REQUIRED: false,
+      // Discovery sub-step OFF in this unit test — runDiscovery is exercised in int tests.
+      ROBOTS_AUDIT_ENABLED: false,
+      ROBOTS_FETCH_TIMEOUT_MS: 10000,
+      ROBOTS_IMPORTANT_PATHS: '/',
+      SITEMAP_AUDIT_ENABLED: false,
+      SITEMAP_MAX_URLS: 50000,
+      SITEMAP_MAX_BYTES: 52428800,
+      SITEMAP_MAX_FILES: 50,
+      SITEMAP_FETCH_TIMEOUT_MS: 15000,
+      IMAGE_FETCH_MAX_BYTES: 5_000_000,
+      IMAGE_MAX_BYTES: 200_000,
+      IMAGE_LEGACY_MIN_BYTES: 50_000,
+      IMAGE_RESPONSIVE_MIN_WIDTH: 640,
+      IMAGE_ALT_MAX_LEN: 125,
+      IMAGE_ALT_MAX_COMMAS: 4,
+      IMAGE_FETCH_MAX: 200,
+      SEO_THIN_WORDS: 200,
+      SEO_THIN_RATIO: 0.1,
+      SEO_NEARDUP_MAX_HAMMING: 3,
+      SEO_TITLE_PX_MIN: 200,
+      SEO_TITLE_PX_MAX: 580,
+      SEO_DESC_PX_MIN: 430,
+      SEO_DESC_PX_MAX: 920,
+      SECURITY_VERIFY_ENABLED: false,
+      CERT_MIN_DAYS: 14,
+      PAGE_WEIGHT_MAX_BYTES: 3_000_000,
+      PAGE_REQUEST_MAX: 80,
       SCORE_DECAY_K: 0.35,
       REPORT_TOP_ACTIONS: 10,
       REPORT_BY_PAGE_MAX_ROWS: 5000,
@@ -359,12 +435,16 @@ describe('CrawlService.crawl', () => {
 
     const extract = { extract: jest.fn() } as unknown as jest.Mocked<ExtractService>;
 
-    return { db, tx, txDelete, txInsert, transaction, audits, extract };
+    // Discovery services — unused here (flags OFF in makeEnv); stub so DI is satisfied.
+    const robots = { fetchAndParse: jest.fn() } as unknown as jest.Mocked<RobotsService>;
+    const sitemap = { discover: jest.fn() } as unknown as jest.Mocked<SitemapService>;
+
+    return { db, tx, txDelete, txInsert, transaction, audits, extract, robots, sitemap };
   }
 
   it('sets status to crawling and leaves it there on success', async () => {
-    const { db, audits, extract } = makeDeps();
-    const service = new CrawlService(db, makeEnv(), audits, extract);
+    const { db, audits, extract, robots, sitemap } = makeDeps();
+    const service = new CrawlService(db, makeEnv(), audits, extract, robots, sitemap);
     // Stub the crawler so we do not hit the network.
     jest
       .spyOn(service as unknown as { runCrawler: () => Promise<unknown[]> }, 'runCrawler')
@@ -378,14 +458,35 @@ describe('CrawlService.crawl', () => {
   });
 
   it('persists with a delete-before-insert transaction (idempotency) and returns counts', async () => {
-    const { db, tx, txDelete, txInsert, transaction, audits, extract } = makeDeps();
-    const service = new CrawlService(db, makeEnv(), audits, extract);
+    const { db, tx, txDelete, txInsert, transaction, audits, extract, robots, sitemap } =
+      makeDeps();
+    const service = new CrawlService(db, makeEnv(), audits, extract, robots, sitemap);
 
     const page = collected(
       { url: 'https://example.com/', finalUrl: 'https://example.com/' },
       emptyExtracted({
-        links: [{ href: 'https://other.com/x', anchorText: null, type: 'external', rel: [] }],
-        images: [{ src: 'https://example.com/i.png', alt: null, title: null }],
+        links: [
+          {
+            href: 'https://other.com/x',
+            anchorText: null,
+            type: 'external',
+            rel: [],
+            anchorIsBareImage: false,
+            imageAltMissing: false,
+          },
+        ],
+        images: [
+          {
+            src: 'https://example.com/i.png',
+            alt: null,
+            title: null,
+            width: null,
+            height: null,
+            loading: null,
+            hasSrcset: false,
+            hasSizes: false,
+          },
+        ],
         hreflang: [{ lang: 'x-default', href: 'https://example.com/' }],
       }),
     );
@@ -405,13 +506,13 @@ describe('CrawlService.crawl', () => {
     const insertOrder = txInsert.mock.invocationCallOrder;
     expect(Math.max(...deleteOrder)).toBeLessThan(Math.min(...insertOrder));
 
-    expect(summary).toEqual({ pages: 1, links: 1, images: 1, hreflang: 1 });
+    expect(summary).toEqual({ pages: 1, links: 1, images: 1, hreflang: 1, structuredData: 0 });
     void tx;
   });
 
   it('calls markFailed(crawl) and rethrows on failure', async () => {
-    const { db, audits, extract } = makeDeps();
-    const service = new CrawlService(db, makeEnv(), audits, extract);
+    const { db, audits, extract, robots, sitemap } = makeDeps();
+    const service = new CrawlService(db, makeEnv(), audits, extract, robots, sitemap);
     const boom = new Error('boom');
     jest
       .spyOn(service as unknown as { runCrawler: () => Promise<unknown[]> }, 'runCrawler')
@@ -422,8 +523,8 @@ describe('CrawlService.crawl', () => {
   });
 
   it('persists responseTimeMs from a collected page that has it set', async () => {
-    const { db, audits, extract } = makeDeps();
-    const service = new CrawlService(db, makeEnv(), audits, extract);
+    const { db, audits, extract, robots, sitemap } = makeDeps();
+    const service = new CrawlService(db, makeEnv(), audits, extract, robots, sitemap);
 
     const page = collected({ responseTimeMs: 123 });
     jest

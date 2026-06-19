@@ -11,7 +11,9 @@ import {
   links,
   pages,
   performance,
+  structuredData,
 } from '../../src/db/schema';
+import { pageResources } from '../../src/db/schema/page-resources';
 import type { NewFinding } from '../../src/db/schema';
 import type { Finding, Rule, RuleDb } from '../../src/analyze/rule.types';
 
@@ -111,6 +113,26 @@ export async function seedImages(auditId: string, rows: SeedImage[]): Promise<nu
   return rows.length;
 }
 
+/** A page-resource seed (feature 09/11). `pageUrl` + `src` + `kind` + `isHttps` required. */
+export type SeedPageResource = Partial<Omit<typeof pageResources.$inferInsert, 'auditId'>> & {
+  pageUrl: string;
+  src: string;
+  kind: string;
+  isHttps: boolean;
+};
+
+/** Bulk-insert page_resources rows for `auditId`. Returns the number inserted. */
+export async function seedPageResources(
+  auditId: string,
+  rows: SeedPageResource[],
+): Promise<number> {
+  if (rows.length === 0) return 0;
+  await getDb()
+    .insert(pageResources)
+    .values(rows.map((r) => ({ ...r, auditId })));
+  return rows.length;
+}
+
 /** A hreflang seed. `pageUrl`, `lang`, `href` required; `isReciprocal` optional. */
 export type SeedHreflang = Partial<Omit<typeof hreflangEntries.$inferInsert, 'auditId'>> & {
   pageUrl: string;
@@ -166,6 +188,28 @@ export async function seedFindings(auditId: string, rows: SeedFinding[]): Promis
 }
 
 /**
+ * A structured-data seed. `pageUrl` + `valid` required; `type`/`errors`
+ * optional (errors defaults to the column default []). `auditId` is injected by
+ * {@link seedStructuredData}, so omit it here.
+ */
+export type SeedStructuredData = Partial<Omit<typeof structuredData.$inferInsert, 'auditId'>> & {
+  pageUrl: string;
+  valid: boolean;
+};
+
+/** Bulk-insert structured-data rows for `auditId`. Returns the number of rows inserted. */
+export async function seedStructuredData(
+  auditId: string,
+  rows: SeedStructuredData[],
+): Promise<number> {
+  if (rows.length === 0) return 0;
+  await getDb()
+    .insert(structuredData)
+    .values(rows.map((r) => ({ ...r, auditId })));
+  return rows.length;
+}
+
+/**
  * Run a single {@link Rule} against the seeded `auditId` using the shared db as
  * the {@link RuleDb}, and return its findings. This is the unit a Wave 2 per-rule
  * test asserts on — it does NOT persist to the `findings` table (the engine owns
@@ -174,4 +218,36 @@ export async function seedFindings(auditId: string, rows: SeedFinding[]): Promis
 export async function runRule(rule: Rule, auditId: string): Promise<Finding[]> {
   const ruleDb: RuleDb = getDb();
   return rule.run(ruleDb, auditId);
+}
+
+// ── Phase 2 features 02/03 seed helpers ────────────────────────────────────
+// `sitemapEntries` and the RobotsAudit/SitemapAudit jsonb types are imported
+// directly from their source files (NOT the schema barrel) so these helpers do
+// not depend on the barrel re-export being applied yet.
+import { sitemapEntries, type NewSitemapEntry } from '../../src/db/schema/sitemap-entries';
+import type { RobotsAudit, SitemapAudit } from '../../src/db/schema/audits';
+
+/** Set the `audits.robots_audit` jsonb for an existing audit (feature 02). */
+export async function seedRobotsAudit(auditId: string, robotsAudit: RobotsAudit): Promise<void> {
+  await getDb().update(audits).set({ robotsAudit }).where(eq(audits.id, auditId));
+}
+
+/** Set the `audits.sitemap_audit` jsonb for an existing audit (feature 03). */
+export async function seedSitemapAudit(auditId: string, sitemapAudit: SitemapAudit): Promise<void> {
+  await getDb().update(audits).set({ sitemapAudit }).where(eq(audits.id, auditId));
+}
+
+/** A sitemap-entry seed. Only `loc` is required; diff columns default per schema. */
+export type SeedSitemapEntry = Partial<Omit<NewSitemapEntry, 'auditId'>> & { loc: string };
+
+/** Bulk-insert `sitemap_entries` for `auditId`. Returns the number inserted. */
+export async function seedSitemapEntries(
+  auditId: string,
+  rows: SeedSitemapEntry[],
+): Promise<number> {
+  if (rows.length === 0) return 0;
+  await getDb()
+    .insert(sitemapEntries)
+    .values(rows.map((r) => ({ ...r, auditId })));
+  return rows.length;
 }

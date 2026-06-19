@@ -74,20 +74,38 @@ describe('ExtractService', () => {
     it('extracts links: skips mailto/fragment, keeps duplicates, classifies, parses rel', () => {
       const page = run();
       expect(page.links).toEqual([
-        { href: 'https://example.com/about', anchorText: 'About us', type: 'internal', rel: [] },
+        {
+          href: 'https://example.com/about',
+          anchorText: 'About us',
+          type: 'internal',
+          rel: [],
+          anchorIsBareImage: false,
+          imageAltMissing: false,
+        },
         {
           href: 'https://external.example.org/partner',
           anchorText: 'Partner',
           type: 'external',
           // rel tokens lowercased + deduped, order preserved.
           rel: ['nofollow', 'sponsored'],
+          anchorIsBareImage: false,
+          imageAltMissing: false,
         },
-        { href: 'https://example.com/about', anchorText: 'About again', type: 'internal', rel: [] },
+        {
+          href: 'https://example.com/about',
+          anchorText: 'About again',
+          type: 'internal',
+          rel: [],
+          anchorIsBareImage: false,
+          imageAltMissing: false,
+        },
         {
           href: 'https://example.com/contact',
           anchorText: 'Contact Us',
           type: 'internal',
           rel: [],
+          anchorIsBareImage: false,
+          imageAltMissing: false,
         },
       ]);
     });
@@ -95,10 +113,46 @@ describe('ExtractService', () => {
     it('extracts images: alt absent => null, alt="" => "", data-src fallback, skips empty src', () => {
       const page = run();
       expect(page.images).toEqual([
-        { src: 'https://example.com/img/hero.png', alt: 'Hero banner', title: 'Hero' },
-        { src: 'https://example.com/img/decorative.png', alt: '', title: null },
-        { src: 'https://example.com/img/no-alt.png', alt: null, title: null },
-        { src: 'https://example.com/img/lazy.png', alt: 'Lazy loaded', title: null },
+        {
+          src: 'https://example.com/img/hero.png',
+          alt: 'Hero banner',
+          title: 'Hero',
+          width: null,
+          height: null,
+          loading: null,
+          hasSrcset: false,
+          hasSizes: false,
+        },
+        {
+          src: 'https://example.com/img/decorative.png',
+          alt: '',
+          title: null,
+          width: null,
+          height: null,
+          loading: null,
+          hasSrcset: false,
+          hasSizes: false,
+        },
+        {
+          src: 'https://example.com/img/no-alt.png',
+          alt: null,
+          title: null,
+          width: null,
+          height: null,
+          loading: null,
+          hasSrcset: false,
+          hasSizes: false,
+        },
+        {
+          src: 'https://example.com/img/lazy.png',
+          alt: 'Lazy loaded',
+          title: null,
+          width: null,
+          height: null,
+          loading: null,
+          hasSrcset: false,
+          hasSizes: false,
+        },
       ]);
     });
 
@@ -293,4 +347,229 @@ describe('ExtractService', () => {
       expect(service.extract(input)).toEqual(service.extract(input));
     });
   });
+
+  describe('image static signals (feature 09)', () => {
+    it('parses width/height/loading and srcset/sizes on the <img> itself', () => {
+      const html =
+        '<html><body>' +
+        '<img src="/a.jpg" width="800" height="600" loading="LAZY" srcset="/a-2x.jpg 2x" sizes="100vw">' +
+        '</body></html>';
+      const page = service.extract(makeInput({ html }));
+      expect(page.images).toEqual([
+        {
+          src: 'https://example.com/a.jpg',
+          alt: null,
+          title: null,
+          width: 800,
+          height: 600,
+          loading: 'lazy',
+          hasSrcset: true,
+          hasSizes: true,
+        },
+      ]);
+    });
+
+    it('treats non-integer dimensions (e.g. 100%, auto) as null', () => {
+      const html = '<html><body><img src="/b.jpg" width="100%" height="auto"></body></html>';
+      const img = service.extract(makeInput({ html })).images[0];
+      expect(img.width).toBeNull();
+      expect(img.height).toBeNull();
+    });
+
+    it('folds a parent <picture><source srcset> into hasSrcset', () => {
+      const html =
+        '<html><body><picture>' +
+        '<source srcset="/c.webp" type="image/webp">' +
+        '<img src="/c.jpg">' +
+        '</picture></body></html>';
+      const img = service.extract(makeInput({ html })).images[0];
+      expect(img.src).toBe('https://example.com/c.jpg');
+      expect(img.hasSrcset).toBe(true);
+    });
+
+    it('a bare <img> reports no responsive hints and null loading', () => {
+      const img = service.extract(
+        makeInput({ html: '<html><body><img src="/d.png"></body></html>' }),
+      ).images[0];
+      expect(img.hasSrcset).toBe(false);
+      expect(img.hasSizes).toBe(false);
+      expect(img.loading).toBeNull();
+    });
+  });
+
+  describe('image-link anchor signals (feature 10)', () => {
+    it('flags an <a> wrapping only an <img> with no alt', () => {
+      const html = '<html><body><a href="/p"><img src="/x.png"></a></body></html>';
+      const link = service.extract(makeInput({ html })).links[0];
+      expect(link.anchorIsBareImage).toBe(true);
+      expect(link.imageAltMissing).toBe(true);
+      expect(link.anchorText).toBeNull();
+    });
+
+    it('a bare image link WITH alt is bare-image but not missing-alt', () => {
+      const html = '<html><body><a href="/p"><img src="/x.png" alt="Logo"></a></body></html>';
+      const link = service.extract(makeInput({ html })).links[0];
+      expect(link.anchorIsBareImage).toBe(true);
+      expect(link.imageAltMissing).toBe(false);
+    });
+
+    it('an <a> with text AND an <img> is NOT a bare-image link', () => {
+      const html = '<html><body><a href="/p">Read <img src="/x.png"></a></body></html>';
+      const link = service.extract(makeInput({ html })).links[0];
+      expect(link.anchorIsBareImage).toBe(false);
+      expect(link.imageAltMissing).toBe(false);
+      expect(link.anchorText).toBe('Read');
+    });
+
+    it('a text-only <a> is neither bare-image nor missing-alt', () => {
+      const html = '<html><body><a href="/p">Plain text</a></body></html>';
+      const link = service.extract(makeInput({ html })).links[0];
+      expect(link.anchorIsBareImage).toBe(false);
+      expect(link.imageAltMissing).toBe(false);
+    });
+  });
+
+  describe('feature 08: content semantics', () => {
+    it('extracts htmlLang, charset (meta charset), hasViewport, wordCount, simhash, pixel widths', () => {
+      const html =
+        '<!doctype html><html lang="en-US"><head>' +
+        '<meta charset="utf-8">' +
+        '<meta name="viewport" content="width=device-width, initial-scale=1">' +
+        '<title>Best Widgets Online</title>' +
+        '<meta name="description" content="A short description of widgets for sale.">' +
+        '</head><body><h1>Widgets</h1> <p>One two three four five six.</p></body></html>';
+      const page = service.extract(makeInput({ html }));
+      expect(page.htmlLang).toBe('en-US');
+      expect(page.charset).toBe('utf-8');
+      expect(page.hasViewport).toBe(true);
+      // visible words: "widgets one two three four five six." => 7 tokens
+      expect(page.wordCount).toBe(7);
+      expect(page.htmlBytes).toBe(Buffer.byteLength(html, 'utf8'));
+      expect(page.contentSimhash).toMatch(/^[01]{64}$/);
+      expect(page.titlePx).toBeGreaterThan(0);
+      expect(page.descPx).toBeGreaterThan(0);
+    });
+
+    it('detects charset from a http-equiv Content-Type meta', () => {
+      const html =
+        '<html><head><meta http-equiv="Content-Type" content="text/html; charset=ISO-8859-1">' +
+        '</head><body>x</body></html>';
+      expect(service.extract(makeInput({ html })).charset).toBe('iso-8859-1');
+    });
+
+    it('hasViewport is false / charset null / htmlLang null when absent', () => {
+      const page = service.extract(makeInput({ html: '<html><head></head><body>x</body></html>' }));
+      expect(page.hasViewport).toBe(false);
+      expect(page.charset).toBeNull();
+      expect(page.htmlLang).toBeNull();
+    });
+
+    it('collects the heading outline in document order, keeping empty headings', () => {
+      const html =
+        '<html><body><h1>Top</h1><h3>Skipped</h3><h2></h2><h2>Sec</h2></body></html>';
+      expect(service.extract(makeInput({ html })).headingsOutline).toEqual([
+        { level: 1, text: 'Top' },
+        { level: 3, text: 'Skipped' },
+        { level: 2, text: '' },
+        { level: 2, text: 'Sec' },
+      ]);
+    });
+
+    it('contentSimhash is deterministic and null for a no-body page', () => {
+      const input = makeInput({ html: '<html><body>Hello there friend of mine indeed</body></html>' });
+      expect(service.extract(input).contentSimhash).toBe(service.extract(input).contentSimhash);
+      const empty = service.extract(
+        makeInput({ html: '<html><body><script>var a=1</script></body></html>' }),
+      );
+      expect(empty.contentSimhash).toBeNull();
+    });
+
+    it('pixel widths are null when title/description are absent', () => {
+      const page = service.extract(makeInput({ html: '<html><body>x</body></html>' }));
+      expect(page.titlePx).toBeNull();
+      expect(page.descPx).toBeNull();
+    });
+
+    it('a wide-glyph title has a larger pixel width than a narrow-glyph one of equal length', () => {
+      const wide = service.extract(
+        makeInput({ html: '<html><head><title>WWWWWWWWWW</title></head><body>x</body></html>' }),
+      );
+      const narrow = service.extract(
+        makeInput({ html: '<html><head><title>iiiiiiiiii</title></head><body>x</body></html>' }),
+      );
+      expect(wide.titlePx!).toBeGreaterThan(narrow.titlePx!);
+    });
+  });
+
+  describe('feature 11: sub-resources + security headers + mobile usability', () => {
+    it('collects script/style/font/iframe sub-resources with is_https, dedup per (kind,src)', () => {
+      const html =
+        '<html><head>' +
+        '<script src="https://cdn.example.com/a.js"></script>' +
+        '<script src="http://cdn.example.com/b.js"></script>' +
+        '<link rel="stylesheet" href="https://example.com/s.css">' +
+        '<link rel="preload" as="font" href="https://example.com/f.woff2">' +
+        '</head><body>' +
+        '<iframe src="http://other.example/embed"></iframe>' +
+        '<script src="https://cdn.example.com/a.js"></script>' + // dup -> deduped
+        '</body></html>';
+      const resources = service.extract(makeInput({ html })).resources;
+      expect(resources).toEqual([
+        { src: 'https://cdn.example.com/a.js', kind: 'script', isHttps: true },
+        { src: 'http://cdn.example.com/b.js', kind: 'script', isHttps: false },
+        { src: 'https://example.com/s.css', kind: 'style', isHttps: true },
+        { src: 'https://example.com/f.woff2', kind: 'font', isHttps: true },
+        { src: 'http://other.example/embed', kind: 'other', isHttps: false },
+      ]);
+    });
+
+    it('captures HSTS / CSP presence / X-Content-Type-Options from headers', () => {
+      const page = service.extract(
+        makeInput({
+          html: '<html></html>',
+          headers: {
+            'Strict-Transport-Security': 'max-age=63072000',
+            'Content-Security-Policy': "default-src 'self'",
+            'X-Content-Type-Options': 'nosniff',
+          },
+        }),
+      );
+      expect(page.security.hsts).toBe('max-age=63072000');
+      expect(page.security.cspPresent).toBe(true);
+      expect(page.security.xContentTypeOptions).toBe('nosniff');
+    });
+
+    it('security header signals default to null/false when absent', () => {
+      const page = service.extract(makeInput({ html: '<html></html>', headers: {} }));
+      expect(page.security.hsts).toBeNull();
+      expect(page.security.cspPresent).toBe(false);
+      expect(page.security.xContentTypeOptions).toBeNull();
+    });
+
+    it('captures the raw viewport content attribute', () => {
+      const page = service.extract(
+        makeInput({
+          html: '<html><head><meta name="viewport" content="width=device-width, user-scalable=no"></head><body>x</body></html>',
+        }),
+      );
+      expect(page.security.viewportContent).toBe('width=device-width, user-scalable=no');
+    });
+
+    it('flags tiny inline fonts and fixed-width overflow as mobile-usability issues', () => {
+      const html =
+        '<html><body>' +
+        '<p style="font-size: 9px">tiny</p>' +
+        '<div style="width: 1200px">wide</div>' +
+        '</body></html>';
+      const issues = service.extract(makeInput({ html })).security.mobileUsabilityIssues.sort();
+      expect(issues).toEqual(['fixed-width-overflow', 'tiny-font']);
+    });
+
+    it('emits no mobile-usability issues for legible / fluid markup', () => {
+      const html =
+        '<html><body><p style="font-size: 16px">ok</p><div style="width: 100%">ok</div></body></html>';
+      expect(service.extract(makeInput({ html })).security.mobileUsabilityIssues).toEqual([]);
+    });
+  });
+
 });

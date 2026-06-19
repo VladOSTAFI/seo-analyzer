@@ -23,11 +23,10 @@ import {
  * SQL. Wave 2's per-rule specs assert real findings via the same harness.
  *
  * Rule count baseline (RULE_EXTERNAL_FLAG_ENABLED off, which is the default):
- *   36 rules — perf.mobile-indexing removed (replaced by per-finding severity in
- *   perf.psi-usability), perf.lab-score added, links.external-flag conditional/off,
- *   plus the six Phase-1 quick-win rules: index.orphan-page, index.click-depth,
- *   index.signal-conflict, index.soft-404, links.anchor-quality,
- *   links.internal-nofollow.
+ *   45 rules — the 36 Phase-1 baseline plus the nine Phase-2 extraction/coverage
+ *   rules: meta.opengraph, schema.missing, schema.invalid, schema.incomplete,
+ *   schema.localbusiness, robots.blocks-important, sitemap.invalid,
+ *   sitemap.url-not-200, sitemap.noindex-url.
  */
 describe('AnalyzeService (integration)', () => {
   const db = getDb() as unknown as Database;
@@ -51,7 +50,7 @@ describe('AnalyzeService (integration)', () => {
     const summary = await service.analyze(auditId);
 
     expect(summary.rulesRun).toBe(RULES.length);
-    expect(summary.rulesRun).toBe(36);
+    expect(summary.rulesRun).toBe(45);
     expect(summary.failedRules).toEqual([]);
     expect(summary.totalFindings).toBe(0);
     expect(summary.bySeverity).toEqual({

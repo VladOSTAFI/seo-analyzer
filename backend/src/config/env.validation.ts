@@ -137,6 +137,64 @@ export const envSchema = z.object({
   // match. Empty/unset uses the rule's built-in list.
   LINK_GENERIC_ANCHORS: strWithDefault(''),
 
+  // --- Phase 2: structured data (feature 06) ---
+  // Cap JSON-LD <script> blocks parsed per page (bounds memory on pages with
+  // huge embedded markup).
+  SCHEMA_MAX_BLOCKS_PER_PAGE: intWithDefault(50),
+  // Truncate the stored raw JSON-LD text per block to this many bytes.
+  SCHEMA_RAW_MAX_BYTES: intWithDefault(8192),
+
+  // --- Phase 2: Open Graph / social (feature 07) ---
+  // When true, a missing og:image is graded medium instead of low.
+  SEO_OG_IMAGE_REQUIRED: boolWithDefault(false),
+
+  // --- Phase 2: robots.txt audit (feature 02). Best-effort discovery sub-step. ---
+  ROBOTS_AUDIT_ENABLED: boolWithDefault(true),
+  ROBOTS_FETCH_TIMEOUT_MS: intWithDefault(10000),
+  // Comma-separated extra "important" path prefixes whose disallow escalates to high.
+  ROBOTS_IMPORTANT_PATHS: strWithDefault('/'),
+
+  // --- Phase 2: XML sitemap validation (feature 03). Best-effort discovery sub-step. ---
+  SITEMAP_AUDIT_ENABLED: boolWithDefault(true),
+  SITEMAP_MAX_URLS: intWithDefault(50000), // protocol cap, per file
+  SITEMAP_MAX_BYTES: intWithDefault(52428800), // 50MB per file
+  SITEMAP_MAX_FILES: intWithDefault(50), // total files per audit (index recursion bound)
+  SITEMAP_FETCH_TIMEOUT_MS: intWithDefault(15000),
+
+  // --- Phase 2: image weight / format / probe (feature 09) ---
+  // Stream-count cap (bytes) when the origin sends no Content-Length on the
+  // image probe GET fallback.
+  IMAGE_FETCH_MAX_BYTES: intWithDefault(5_000_000),
+  // image.oversized threshold (bytes at/above which an image is flagged).
+  IMAGE_MAX_BYTES: intWithDefault(200_000),
+  // image.legacy-format min bytes (tiny legacy icons below this are not flagged).
+  IMAGE_LEGACY_MIN_BYTES: intWithDefault(50_000),
+  // image.responsive min intrinsic width before a non-srcset image is flagged.
+  IMAGE_RESPONSIVE_MIN_WIDTH: intWithDefault(640),
+  // image.alt-quality over-long alt threshold (characters).
+  IMAGE_ALT_MAX_LEN: intWithDefault(125),
+  // image.alt-quality comma-list keyword-stuffing threshold.
+  IMAGE_ALT_MAX_COMMAS: intWithDefault(4),
+  // Distinct image srcs probed per audit (forward-compat; probe currently reuses
+  // EXTERNAL_VERIFY_MAX for the budget).
+  IMAGE_FETCH_MAX: intWithDefault(200),
+
+  // --- Phase 2: content semantics (feature 08) ---
+  SEO_THIN_WORDS: intWithDefault(200),
+  SEO_THIN_RATIO: floatWithDefault(0.1),
+  SEO_NEARDUP_MAX_HAMMING: intWithDefault(3),
+  SEO_TITLE_PX_MIN: intWithDefault(200),
+  SEO_TITLE_PX_MAX: intWithDefault(580),
+  SEO_DESC_PX_MIN: intWithDefault(430),
+  SEO_DESC_PX_MAX: intWithDefault(920),
+
+  // --- Phase 2: HTTPS / security / mobile (feature 11) ---
+  // Gate for the best-effort TLS cert probe (the only network-touching part); OFF by default.
+  SECURITY_VERIFY_ENABLED: boolWithDefault(false),
+  CERT_MIN_DAYS: intWithDefault(14),
+  PAGE_WEIGHT_MAX_BYTES: intWithDefault(3_000_000),
+  PAGE_REQUEST_MAX: intWithDefault(80),
+
   // --- Report layer: score + action plan (plans 12/13) ---
   // Exponential-decay constant for the SEO health score normalization (plan 12
   // §3.5): score = round(100 × exp(−K × penaltyDensity)). Tunable so calibration

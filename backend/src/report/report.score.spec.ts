@@ -31,27 +31,30 @@ function coverage(pagesCrawled: number, rulesInert: string[] = []): CoverageMani
 }
 
 describe('report.score computeScore', () => {
-  it('empty findings + pagesCrawled=20 → overall 100, every assessed category 100, Structured Data not assessed', () => {
+  it('empty findings + pagesCrawled=20 → overall 100, every assessed category 100 (incl. Structured Data in Phase 2)', () => {
     const result = computeScore([], 20, coverage(20));
     expect(result.overall).toBe(100);
     expect(result.formulaVersion).toBe(1);
+    // Phase 2: schema.* rules make Structured Data assessable like every other category.
     for (const key of CATEGORY_KEYS) {
-      if (key === 'structuredData') {
-        expect(result.categories[key]).toMatchObject({ assessed: false, score: null });
-      } else {
-        expect(result.categories[key].assessed).toBe(true);
-        expect(result.categories[key].score).toBe(100);
-      }
+      expect(result.categories[key].assessed).toBe(true);
+      expect(result.categories[key].score).toBe(100);
     }
-    // Structured Data is NEVER 100 in Phase 1.
-    expect(result.categories.structuredData.score).not.toBe(100);
   });
 
-  it('Structured Data is always {assessed:false, score:null} even with inert rules listed', () => {
-    const result = computeScore([], 20, coverage(20));
-    expect(result.categories.structuredData).toEqual(
-      expect.objectContaining({ assessed: false, score: null }),
+  it('Structured Data is now an assessable category (Phase 2): a schema finding penalizes it', () => {
+    const clean = computeScore([], 20, coverage(20));
+    expect(clean.categories.structuredData).toEqual(
+      expect.objectContaining({ assessed: true, score: 100 }),
     );
+
+    const withIssue = computeScore(
+      [f('schema.missing', 'medium', 'https://x.test/p')],
+      20,
+      coverage(20),
+    );
+    expect(withIssue.categories.structuredData.assessed).toBe(true);
+    expect(withIssue.categories.structuredData.score).toBeLessThan(100);
   });
 
   it('one critical on a 10-page crawl scores strictly lower than on a 1000-page crawl (normalization)', () => {

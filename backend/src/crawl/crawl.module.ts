@@ -3,6 +3,8 @@ import { AuditModule } from '../audit/audit.module';
 import { CrawlCommand } from '../cli/crawl.command';
 import { CrawlService } from './crawl.service';
 import { ExtractService } from './extract.service';
+import { RobotsService } from './robots.service';
+import { SitemapService } from './sitemap.service';
 
 /**
  * Phase 1 crawl module. Wires the crawler ({@link CrawlService}), the extractor
@@ -12,7 +14,7 @@ import { ExtractService } from './extract.service';
  */
 @Module({
   imports: [AuditModule],
-  providers: [CrawlService, ExtractService, CrawlCommand],
+  providers: [CrawlService, ExtractService, RobotsService, SitemapService, CrawlCommand],
   exports: [CrawlService],
 })
 export class CrawlModule {}

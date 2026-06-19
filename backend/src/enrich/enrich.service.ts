@@ -131,6 +131,11 @@ export class EnrichService {
       summary.imagesVerified = imageProbe.imagesVerified;
       summary.imagesTruncated = imageProbe.truncated;
 
+      // (6) TLS cert probe — one connection per distinct HTTPS host, writes
+      // pages.cert_valid / cert_days_to_expiry for the `security.cert` rule.
+      // Best-effort; never throws. Gated by SECURITY_VERIFY_ENABLED (default OFF).
+      const certProbe = await this.linkVerifier.verifyCerts(auditId);
+
       const elapsedMs = Date.now() - startedAt;
       this.logger.log(
         `Enrich done audit=${auditId} links=${summary.linksResolved} ` +
@@ -139,6 +144,7 @@ export class EnrichService {
           `verify_inconclusive=${summary.verifyInconclusive} ` +
           `externals_verified=${summary.externalsVerified} externals_truncated=${summary.externalsTruncated} ` +
           `images_verified=${summary.imagesVerified} images_truncated=${summary.imagesTruncated} ` +
+          `cert_hosts_checked=${certProbe.hostsChecked} ` +
           `inlinked_pages=${summary.pagesWithInlinks} ` +
           `images=${summary.imagesResolved} hreflang_reciprocal=${summary.hreflangReciprocal} ` +
           `redirect_chains=${summary.redirectChainPages} loops=${summary.redirectLoopPages} ` +

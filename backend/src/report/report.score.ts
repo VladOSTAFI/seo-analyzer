@@ -48,14 +48,15 @@ export type ScoreCategoryKey =
  * Category → its set of `ruleFamily` prefixes (plan §3.6). A family matches a
  * category iff it `===` an entry or starts with `entry + '.'` (prefix match on
  * the dotted family, so `index` matches `index.canonical` etc.). Structured
- * Data has NO families in Phase 1 (reserved) — it is always `assessed:false`.
+ * Data becomes assessable in Phase 2 once `schema.*` rules exist.
  */
 export const CATEGORY_FAMILIES: Record<ScoreCategoryKey, string[]> = {
-  indexability: ['index', 'mirror', 'dupe', 'pagination', 'i18n'],
-  content: ['meta', 'image'],
-  performance: ['perf'],
+  indexability: ['index', 'mirror', 'dupe', 'pagination', 'i18n', 'robots', 'sitemap'],
+  content: ['meta', 'image', 'content'],
+  // Phase 2: security/mobile/page-weight are page-experience signals → performance.
+  performance: ['perf', 'security', 'mobile', 'page'],
   links: ['links'],
-  structuredData: [], // reserved — Phase 2 schema.* rules; always not-assessed in Phase 1
+  structuredData: ['schema'], // Phase 2: schema.* rules now make this category assessable
 };
 
 /** Human labels for the five categories (Summary / Coverage cross-linking). */
@@ -158,7 +159,7 @@ function bySeverityOfGroups(groups: IssueGroup[]): Record<Severity, number> {
 /**
  * Which category keys are "assessable": at least one rule in the category's
  * families exists in the live registry AND was not entirely inert (plan §3.7).
- * Structured Data has no families → never assessable in Phase 1.
+ * Structured Data becomes assessable in Phase 2 once `schema.*` rules exist.
  */
 function assessableCategories(coverage: CoverageManifest | null): Set<ScoreCategoryKey> {
   const inert = new Set(coverage?.rulesInert ?? []);

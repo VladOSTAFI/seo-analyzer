@@ -31,25 +31,31 @@ import { remediationFor } from './report.remediation';
  *   - `links.external-flag` / "External Links" sheet — only included when
  *     `RULE_EXTERNAL_FLAG_ENABLED` is truthy (mirrors rule.registry.ts exactly).
  *
- * ── coverage check (36 ruleIds when external-flag is OFF, 37 when ON) ────────
+ * ── coverage check (64 ruleIds when external-flag is OFF, 65 when ON) ────────
  *   Redirects        : links.internal-redirect, links.redirect-chain
- *   Broken Links     : links.broken-internal, links.broken-external
+ *   Broken Links     : links.broken-internal, links.broken-external, links.external-redirect
  *   External Links   : links.external-flag (conditional)
  *   Link Quality     : links.anchor-quality, links.internal-nofollow
  *   Titles           : meta.title.missing, meta.title.duplicate, meta.title.multiple
  *   Descriptions     : meta.description.missing, meta.description.duplicate, meta.description.multiple
  *   H1               : meta.h1.missing, meta.h1.duplicate, meta.h1.multiple
- *   Duplicate Pages  : dupe.content
+ *   Duplicate Pages  : dupe.content, dupe.near-content
  *   Indexation       : index.canonical, index.robots
  *   URL Heuristics   : index.url-heuristics
  *   Internal Structure : index.orphan-page, index.click-depth
  *   Signal Conflicts : index.signal-conflict, index.soft-404
  *   Pagination       : pagination.rel
  *   Hreflang         : i18n.hreflang
- *   Images           : image.alt-title, image.broken
+ *   Images           : image.alt-title, image.alt-quality, image.broken, image.oversized, image.legacy-format, image.no-dimensions, image.responsive, image.lazy-loading
  *   Mirrors          : mirror.main-mirror, mirror.trailing-slash
  *   Performance      : perf.lcp, perf.cls-inp, perf.psi-usability, perf.lab-score
  *   Meta Templates   : meta.title.template, meta.description.template, meta.h1.template
+ *   Structured Data  : schema.missing, schema.invalid, schema.incomplete, schema.localbusiness
+ *   Content          : content.headings-hierarchy, content.thin, index.lang-viewport
+ *   Security & Mobile: security.mixed-content, security.https, security.hsts, security.headers, security.cert, mobile.viewport, mobile.usability, page.weight
+ *   Social           : meta.opengraph
+ *   Robots.txt       : robots.blocks-important
+ *   Sitemap          : sitemap.invalid, sitemap.url-not-200, sitemap.noindex-url
  * ────────────────────────────────────────────────────────────────────────────
  */
 
@@ -336,18 +342,22 @@ export const REPORT_SECTIONS: ReportSection[] = [
         { header: 'Link type', key: 'linkType', width: 12 },
       ],
     },
-    ruleIds: ['links.broken-internal', 'links.broken-external'],
+    ruleIds: ['links.broken-internal', 'links.broken-external', 'links.external-redirect'],
     buildRows: (findings): SheetRow[] =>
-      findings.map((f) => ({
-        severity: f.severity,
-        confidence: f.confidence,
-        url: f.url ?? SITE_WIDE,
-        href: str(f.detail, 'href'),
-        targetStatusCode: num(f.detail, 'targetStatusCode'),
-        // 'links.broken-internal' → 'internal'; 'links.broken-external' → 'external'
-        linkType: ruleTail(f.ruleId).replace(/^broken-/, ''),
-        recommendation: remediationFor(f.ruleId)?.howToFix ?? null,
-      })),
+      findings.map((f) => {
+        const tail = ruleTail(f.ruleId); // 'broken-internal' | 'broken-external' | 'external-redirect'
+        const linkType =
+          tail === 'external-redirect' ? 'external (3xx)' : tail.replace(/^broken-/, '');
+        return {
+          severity: f.severity,
+          confidence: f.confidence,
+          url: f.url ?? SITE_WIDE,
+          href: str(f.detail, 'href'),
+          targetStatusCode: num(f.detail, 'targetStatusCode'),
+          linkType,
+          recommendation: remediationFor(f.ruleId)?.howToFix ?? null,
+        };
+      }),
   },
   // Conditional: only when RULE_EXTERNAL_FLAG_ENABLED is truthy (mirrors rule.registry.ts).
   ...(externalFlagEnabled ? [EXTERNAL_LINKS_SECTION] : []),
@@ -480,16 +490,18 @@ export const REPORT_SECTIONS: ReportSection[] = [
   {
     spec: {
       name: 'Duplicate Pages',
-      description: 'Pages sharing an identical content hash (duplicate bodies).',
+      description: 'Pages sharing an identical content hash, or near-duplicate bodies (simhash).',
       columns: [
         { header: 'Severity', key: 'severity', width: 10 },
         { header: 'Confidence', key: 'confidence', width: 12 },
         { header: 'Page', key: 'url', width: 60 },
         { header: 'Content hash', key: 'contentHash', width: 40 },
         { header: 'Group size', key: 'duplicateCount', width: 12 },
+        { header: 'Near-dup of', key: 'nearUrl', width: 60 },
+        { header: 'Hamming', key: 'hamming', width: 10 },
       ],
     },
-    ruleIds: ['dupe.content'],
+    ruleIds: ['dupe.content', 'dupe.near-content'],
     buildRows: (findings): SheetRow[] =>
       findings.map((f) => ({
         severity: f.severity,
@@ -497,6 +509,8 @@ export const REPORT_SECTIONS: ReportSection[] = [
         url: f.url ?? SITE_WIDE,
         contentHash: str(f.detail, 'contentHash'),
         duplicateCount: num(f.detail, 'duplicateCount'),
+        nearUrl: str(f.detail, 'nearUrl'),
+        hamming: num(f.detail, 'hamming'),
         recommendation: remediationFor(f.ruleId)?.howToFix ?? null,
       })),
   },
@@ -678,24 +692,53 @@ export const REPORT_SECTIONS: ReportSection[] = [
   {
     spec: {
       name: 'Images',
-      description: 'Images missing alt text, and images returning 4xx/5xx.',
+      description:
+        'Image alt presence/quality, byte weight, format, dimensions, responsive + lazy-loading.',
       columns: [
         { header: 'Severity', key: 'severity', width: 10 },
         { header: 'Confidence', key: 'confidence', width: 12 },
         { header: 'Page', key: 'url', width: 60 },
         { header: 'Image src', key: 'src', width: 60 },
-        { header: 'Issue', key: 'issue', width: 16 },
+        { header: 'Issue', key: 'issue', width: 18 },
         { header: 'Status', key: 'statusCode', width: 10 },
+        { header: 'Bytes', key: 'bytes', width: 12 },
+        { header: 'Format', key: 'format', width: 10 },
+        { header: 'W×H', key: 'dimensions', width: 12 },
+        { header: 'loading', key: 'loading', width: 10 },
+        { header: 'srcset?', key: 'hasSrcset', width: 10 },
+        { header: 'Recommendation', key: 'recommendation', width: 40 },
       ],
     },
-    ruleIds: ['image.alt-title', 'image.broken'],
+    ruleIds: [
+      'image.alt-title',
+      'image.alt-quality',
+      'image.broken',
+      'image.oversized',
+      'image.legacy-format',
+      'image.no-dimensions',
+      'image.responsive',
+      'image.lazy-loading',
+    ],
     buildRows: (findings): SheetRow[] =>
       findings.map((f) => {
-        const isBroken = f.ruleId === 'image.broken';
-        // alt-title: detail.altState is 'missing'|'empty'; broken: a status-based label.
-        const issue = isBroken
-          ? `broken (${str(f.detail, 'statusCode') ?? '?'})`
-          : str(f.detail, 'altState');
+        const tail = ruleTail(f.ruleId);
+        let issue: Cell;
+        switch (f.ruleId) {
+          case 'image.alt-title':
+            issue = str(f.detail, 'altState'); // 'missing' | 'empty'
+            break;
+          case 'image.alt-quality':
+            issue = str(f.detail, 'qualityIssue'); // filename-as-alt|too-long|keyword-stuffed
+            break;
+          case 'image.broken':
+            issue = `broken (${str(f.detail, 'statusCode') ?? '?'})`;
+            break;
+          default:
+            issue = tail; // oversized|legacy-format|no-dimensions|responsive|lazy-loading
+        }
+        const w = num(f.detail, 'width');
+        const h = num(f.detail, 'height');
+        const dimensions = w !== null || h !== null ? `${w ?? '?'}×${h ?? '?'}` : null;
         return {
           severity: f.severity,
           confidence: f.confidence,
@@ -703,6 +746,11 @@ export const REPORT_SECTIONS: ReportSection[] = [
           src: str(f.detail, 'src'),
           issue,
           statusCode: num(f.detail, 'statusCode'),
+          bytes: num(f.detail, 'bytes'),
+          format: str(f.detail, 'format'),
+          dimensions,
+          loading: str(f.detail, 'loading'),
+          hasSrcset: bool(f.detail, 'hasSrcset'),
           recommendation: remediationFor(f.ruleId)?.howToFix ?? null,
         };
       }),
@@ -811,6 +859,239 @@ export const REPORT_SECTIONS: ReportSection[] = [
           length: num(f.detail, 'length'),
           // detail.recommendation is 'too-short' | 'too-long'.
           recommendation: str(f.detail, 'recommendation'),
+        };
+      }),
+  },
+
+  // ── schema.* (Structured Data) ─────────────────────────────────────────────
+  {
+    spec: {
+      name: 'Structured Data',
+      description:
+        'Schema.org / JSON-LD presence, JSON validity, shape completeness, and LocalBusiness NAP.',
+      columns: [
+        { header: 'Severity', key: 'severity', width: 10 },
+        { header: 'Confidence', key: 'confidence', width: 12 },
+        { header: 'Page', key: 'url', width: 60 },
+        { header: 'Type', key: 'type', width: 20 },
+        { header: 'Issue', key: 'issue', width: 16 },
+        { header: 'Missing props', key: 'missing', width: 40 },
+        { header: 'Recommendation', key: 'recommendation', width: 50 },
+      ],
+    },
+    ruleIds: ['schema.missing', 'schema.invalid', 'schema.incomplete', 'schema.localbusiness'],
+    buildRows: (findings): SheetRow[] =>
+      findings.map((f) => {
+        const recommendation =
+          f.ruleId === 'schema.localbusiness'
+            ? 'Add LocalBusiness schema with NAP, geo coordinates, opening hours, and phone'
+            : f.ruleId === 'schema.missing'
+              ? 'Add relevant Schema.org JSON-LD (Organization / LocalBusiness / BreadcrumbList)'
+              : f.ruleId === 'schema.invalid'
+                ? 'Fix the JSON-LD syntax error so the block can be parsed'
+                : 'Add the missing required / recommended structured-data properties';
+        return {
+          severity: f.severity,
+          confidence: f.confidence,
+          url: f.url ?? SITE_WIDE,
+          type: str(f.detail, 'type'),
+          issue: str(f.detail, 'issue') ?? ruleTail(f.ruleId),
+          missing: joined(f.detail, 'missing'),
+          recommendation,
+        };
+      }),
+  },
+
+  // ── meta.opengraph (Social) ────────────────────────────────────────────────
+  {
+    spec: {
+      name: 'Social',
+      description: 'Open Graph & Twitter Card tags: missing/invalid og:* and twitter:card.',
+      columns: [
+        { header: 'Severity', key: 'severity', width: 10 },
+        { header: 'Confidence', key: 'confidence', width: 12 },
+        { header: 'Page', key: 'url', width: 60 },
+        { header: 'Issues', key: 'issues', width: 50 },
+        { header: 'og:title', key: 'ogTitle', width: 40 },
+        { header: 'og:image', key: 'ogImage', width: 50 },
+        { header: 'twitter:card', key: 'twitterCard', width: 20 },
+        { header: 'Recommendation', key: 'recommendation', width: 50 },
+      ],
+    },
+    ruleIds: ['meta.opengraph'],
+    buildRows: (findings): SheetRow[] =>
+      findings.map((f) => ({
+        severity: f.severity,
+        confidence: f.confidence,
+        url: f.url ?? SITE_WIDE,
+        issues: joined(f.detail, 'issues'),
+        ogTitle: str(f.detail, 'ogTitle'),
+        ogImage: str(f.detail, 'ogImage'),
+        twitterCard: str(f.detail, 'twitterCard'),
+        recommendation:
+          'Add Open Graph (og:title/description/image/url) and a valid twitter:card tag',
+      })),
+  },
+
+  // ── robots.* (Robots.txt) ──────────────────────────────────────────────────
+  {
+    spec: {
+      name: 'Robots.txt',
+      description:
+        'Site-level robots.txt issues: whole-site/asset/important disallows, unreachable, missing Sitemap.',
+      columns: [
+        { header: 'Severity', key: 'severity', width: 10 },
+        { header: 'Confidence', key: 'confidence', width: 12 },
+        { header: 'Page', key: 'url', width: 20 },
+        { header: 'Issue', key: 'issue', width: 22 },
+        { header: 'Detail', key: 'detail', width: 70 },
+      ],
+    },
+    ruleIds: ['robots.blocks-important'],
+    buildRows: (findings): SheetRow[] =>
+      findings.map((f) => ({
+        severity: f.severity,
+        confidence: f.confidence,
+        url: f.url ?? SITE_WIDE,
+        issue: str(f.detail, 'kind'),
+        detail: str(f.detail, 'detail'),
+        recommendation: remediationFor(f.ruleId)?.howToFix ?? null,
+      })),
+  },
+
+  // ── sitemap.* (Sitemap) ────────────────────────────────────────────────────
+  {
+    spec: {
+      name: 'Sitemap',
+      description:
+        'XML sitemap validity and listed-URL indexability (non-200, noindex, non-self-canonical).',
+      columns: [
+        { header: 'Severity', key: 'severity', width: 10 },
+        { header: 'Confidence', key: 'confidence', width: 12 },
+        { header: 'URL', key: 'url', width: 60 },
+        { header: 'Issue', key: 'issue', width: 18 },
+        { header: 'Status', key: 'statusCode', width: 8 },
+        { header: 'Detail', key: 'detail', width: 40 },
+      ],
+    },
+    ruleIds: ['sitemap.invalid', 'sitemap.url-not-200', 'sitemap.noindex-url'],
+    buildRows: (findings): SheetRow[] =>
+      findings.map((f) => {
+        const tail = ruleTail(f.ruleId); // 'invalid' | 'url-not-200' | 'noindex-url'
+        const detail =
+          tail === 'invalid' ? joined(f.detail, 'errors') : joined(f.detail, 'reason');
+        return {
+          severity: f.severity,
+          confidence: f.confidence,
+          url: f.url ?? SITE_WIDE,
+          issue: tail,
+          statusCode: num(f.detail, 'statusCode'),
+          detail,
+          recommendation: remediationFor(f.ruleId)?.howToFix ?? null,
+        };
+      }),
+  },
+
+  // ── content.* + index.lang-viewport (Content) ──────────────────────────────
+  {
+    spec: {
+      name: 'Content',
+      description:
+        'Heading hierarchy, thin/low-content pages, and missing <html lang>/charset/viewport.',
+      columns: [
+        { header: 'Severity', key: 'severity', width: 10 },
+        { header: 'Confidence', key: 'confidence', width: 12 },
+        { header: 'Page', key: 'url', width: 60 },
+        { header: 'Issue', key: 'issue', width: 22 },
+        { header: 'Detail', key: 'detail', width: 50 },
+        { header: 'Word count', key: 'wordCount', width: 12 },
+        { header: 'Recommendation', key: 'recommendation', width: 40 },
+      ],
+    },
+    ruleIds: ['content.headings-hierarchy', 'content.thin', 'index.lang-viewport'],
+    buildRows: (findings): SheetRow[] =>
+      findings.map((f) => {
+        const issue =
+          f.ruleId === 'content.thin'
+            ? 'thin'
+            : f.ruleId === 'index.lang-viewport'
+              ? 'lang/charset/viewport'
+              : 'heading-hierarchy';
+        const detail =
+          f.ruleId === 'content.headings-hierarchy'
+            ? joined(f.detail, 'issues')
+            : joined(f.detail, 'reason');
+        return {
+          severity: f.severity,
+          confidence: f.confidence,
+          url: f.url ?? SITE_WIDE,
+          issue,
+          detail,
+          wordCount: num(f.detail, 'wordCount'),
+          recommendation: remediationFor(f.ruleId)?.howToFix ?? null,
+        };
+      }),
+  },
+
+  // ── security.* + mobile.* + page.weight (Security & Mobile) ─────────────────
+  {
+    spec: {
+      name: 'Security & Mobile',
+      description:
+        'HTTPS/mixed-content, HSTS, security headers, TLS cert, viewport & mobile usability, page weight.',
+      columns: [
+        { header: 'Severity', key: 'severity', width: 10 },
+        { header: 'Confidence', key: 'confidence', width: 12 },
+        { header: 'Page', key: 'url', width: 60 },
+        { header: 'Issue', key: 'issue', width: 20 },
+        { header: 'Detail', key: 'detail', width: 60 },
+        { header: 'Recommendation', key: 'recommendation', width: 44 },
+      ],
+    },
+    ruleIds: [
+      'security.mixed-content',
+      'security.https',
+      'security.hsts',
+      'security.headers',
+      'security.cert',
+      'mobile.viewport',
+      'mobile.usability',
+      'page.weight',
+    ],
+    buildRows: (findings): SheetRow[] =>
+      findings.map((f) => {
+        const issue = ruleTail(f.ruleId);
+        let detail: Cell;
+        switch (f.ruleId) {
+          case 'security.mixed-content':
+            detail = `${str(f.detail, 'kind') ?? '?'}: ${str(f.detail, 'src') ?? ''}`;
+            break;
+          case 'security.https':
+            detail = str(f.detail, 'finalUrl');
+            break;
+          case 'security.headers':
+          case 'mobile.viewport':
+            detail = joined(f.detail, 'reason');
+            break;
+          case 'mobile.usability':
+            detail = joined(f.detail, 'issues');
+            break;
+          case 'security.cert':
+            detail = `${str(f.detail, 'reason') ?? ''} (${num(f.detail, 'daysToExpiry') ?? '?'}d)`;
+            break;
+          case 'page.weight':
+            detail = `${num(f.detail, 'totalBytes') ?? 0}B / ${num(f.detail, 'requestCount') ?? 0} reqs`;
+            break;
+          default:
+            detail = null; // security.hsts is presence-only
+        }
+        return {
+          severity: f.severity,
+          confidence: f.confidence,
+          url: f.url ?? SITE_WIDE,
+          issue,
+          detail,
+          recommendation: remediationFor(f.ruleId)?.howToFix ?? null,
         };
       }),
   },

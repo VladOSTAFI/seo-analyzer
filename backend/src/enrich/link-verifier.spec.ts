@@ -87,6 +87,31 @@ function okResponse(status: number): Response {
   } as unknown as Response;
 }
 
+/**
+ * A fetch mock for the image probe: carries a `headers.get()` (Content-Length /
+ * Content-Type) plus a cancellable body. `contentLength`/`contentType` may be
+ * null to simulate a header-less response (forces the GET stream-count path).
+ */
+function imageResponse(
+  status: number,
+  opts: { contentLength?: number | null; contentType?: string | null } = {},
+): Response {
+  const { contentLength = 12345, contentType = 'image/jpeg' } = opts;
+  const headers = {
+    get: (name: string): string | null => {
+      const n = name.toLowerCase();
+      if (n === 'content-length') return contentLength === null ? null : String(contentLength);
+      if (n === 'content-type') return contentType;
+      return null;
+    },
+  };
+  return {
+    status,
+    headers,
+    body: { cancel: jest.fn().mockResolvedValue(undefined) },
+  } as unknown as Response;
+}
+
 describe('LinkVerifierService.verifyBrokenLinks', () => {
   const realFetch = global.fetch;
 
@@ -407,7 +432,7 @@ describe('LinkVerifierService.probeImages', () => {
   });
 
   it('probes image srcs and updates status_code when enabled', async () => {
-    const fetchMock = jest.fn().mockResolvedValue(okResponse(200));
+    const fetchMock = jest.fn().mockResolvedValue(imageResponse(200));
     global.fetch = fetchMock as unknown as typeof fetch;
     const { service, updates } = makeProbeVerifier(
       [{ src: 'https://cdn.example.com/img.jpg' }],
@@ -418,12 +443,17 @@ describe('LinkVerifierService.probeImages', () => {
 
     expect(result.imagesVerified).toBe(1);
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(updates).toHaveLength(1);
-    expect(updates[0]).toContain('status_code');
+    // Two UPDATEs per src: images.status_code AND page_resources (status/bytes/format).
+    expect(updates).toHaveLength(2);
+    expect(updates.some((u) => u.includes('update images'))).toBe(true);
+    const pr = updates.find((u) => u.includes('page_resources'));
+    expect(pr).toBeDefined();
+    expect(pr).toContain('bytes');
+    expect(pr).toContain('format');
   });
 
   it('enforces per-host budget for images', async () => {
-    const fetchMock = jest.fn().mockResolvedValue(okResponse(200));
+    const fetchMock = jest.fn().mockResolvedValue(imageResponse(200));
     global.fetch = fetchMock as unknown as typeof fetch;
     const srcs = [
       { src: 'https://cdn.example.com/img1.jpg' },
@@ -447,7 +477,7 @@ describe('LinkVerifierService.probeImages', () => {
   });
 
   it('enforces global cap for images', async () => {
-    const fetchMock = jest.fn().mockResolvedValue(okResponse(200));
+    const fetchMock = jest.fn().mockResolvedValue(imageResponse(200));
     global.fetch = fetchMock as unknown as typeof fetch;
     const srcs = ['a', 'b', 'c', 'd'].map((h) => ({ src: `https://${h}.cdn.com/img.jpg` }));
     const { service } = makeProbeVerifier(
@@ -474,7 +504,7 @@ describe('LinkVerifierService.probeImages', () => {
   });
 
   it('skips non-http(s) image srcs', async () => {
-    const fetchMock = jest.fn().mockResolvedValue(okResponse(200));
+    const fetchMock = jest.fn().mockResolvedValue(imageResponse(200));
     global.fetch = fetchMock as unknown as typeof fetch;
     const { service } = makeProbeVerifier(
       [{ src: 'data:image/png;base64,abc' }, { src: 'https://cdn.example.com/ok.jpg' }],
@@ -485,5 +515,137 @@ describe('LinkVerifierService.probeImages', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(result.imagesVerified).toBe(1);
+  });
+
+  it('records bytes + format from HEAD Content-Length/Content-Type', async () => {
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValue(imageResponse(200, { contentLength: 204800, contentType: 'image/webp' }));
+    global.fetch = fetchMock as unknown as typeof fetch;
+    const { service, updates } = makeProbeVerifier(
+      [{ src: 'https://cdn.example.com/hero.webp' }],
+      makeEnv({ IMAGE_VERIFY_ENABLED: true }),
+    );
+
+    await service.probeImages(AUDIT_ID);
+
+    // HEAD alone supplied a usable Content-Length → exactly one fetch.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const pr = updates.find((u) => u.includes('page_resources'));
+    expect(pr).toBeDefined();
+    expect(pr).toContain('bytes');
+    expect(pr).toContain('format');
+  });
+
+  it('falls back to GET when HEAD is 405 (HEAD-unsupported origin)', async () => {
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValueOnce(imageResponse(405, { contentLength: null }))
+      .mockResolvedValueOnce(imageResponse(200, { contentLength: 99999 }));
+    global.fetch = fetchMock as unknown as typeof fetch;
+    const { service } = makeProbeVerifier(
+      [{ src: 'https://cdn.example.com/x.jpg' }],
+      makeEnv({ IMAGE_VERIFY_ENABLED: true }),
+    );
+
+    await service.probeImages(AUDIT_ID);
+
+    // HEAD (405) then GET fallback ⇒ two fetches for the one src.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [, headInit] = fetchMock.mock.calls[0];
+    const [, getInit] = fetchMock.mock.calls[1];
+    expect(headInit.method).toBe('HEAD');
+    expect(getInit.method).toBe('GET');
+  });
+
+  it('GETs and stream-counts the body when no Content-Length header is present', async () => {
+    // HEAD has no Content-Length → GET; GET also lacks it → stream-count.
+    const chunks = [new Uint8Array(1000), new Uint8Array(500)];
+    let i = 0;
+    const reader = {
+      read: jest.fn().mockImplementation(async () => {
+        if (i < chunks.length) return { done: false, value: chunks[i++] };
+        return { done: true, value: undefined };
+      }),
+      cancel: jest.fn().mockResolvedValue(undefined),
+    };
+    const streamingGet = {
+      status: 200,
+      headers: {
+        get: (n: string): string | null =>
+          n.toLowerCase() === 'content-type' ? 'image/png' : null,
+      },
+      body: { getReader: () => reader, cancel: jest.fn().mockResolvedValue(undefined) },
+    } as unknown as Response;
+
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValueOnce(imageResponse(200, { contentLength: null }))
+      .mockResolvedValueOnce(streamingGet);
+    global.fetch = fetchMock as unknown as typeof fetch;
+    const { service } = makeProbeVerifier(
+      [{ src: 'https://cdn.example.com/nolen.png' }],
+      makeEnv({ IMAGE_VERIFY_ENABLED: true }),
+    );
+
+    await service.probeImages(AUDIT_ID);
+
+    // HEAD (no length) then GET (no length) ⇒ stream-counted via the reader.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(reader.read).toHaveBeenCalled();
+  });
+});
+
+describe('LinkVerifierService.verifyCerts (cert probe)', () => {
+  const ORIG = process.env.SECURITY_VERIFY_ENABLED;
+  afterEach(() => {
+    if (ORIG === undefined) delete process.env.SECURITY_VERIFY_ENABLED;
+    else process.env.SECURITY_VERIFY_ENABLED = ORIG;
+    jest.restoreAllMocks();
+  });
+
+  it('is a no-op when SECURITY_VERIFY_ENABLED is off (no SELECT, zero hosts)', async () => {
+    delete process.env.SECURITY_VERIFY_ENABLED;
+    const execute = jest.fn(async () => rowsResult([]));
+    const service = new LinkVerifierService({ execute } as unknown as Database, makeEnv());
+    const res = await service.verifyCerts(AUDIT_ID);
+    expect(res).toEqual({ hostsChecked: 0 });
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('probes one cert per distinct host and updates the cert columns when enabled', async () => {
+    process.env.SECURITY_VERIFY_ENABLED = 'true';
+    const updates: string[] = [];
+    const execute = jest.fn(async (query: { queryChunks?: unknown }) => {
+      if (leadingKeyword(query) === 'select') {
+        return rowsResult([
+          { eff_url: 'https://a.example/page1' },
+          { eff_url: 'https://a.example/page2' }, // same host → one probe
+          { eff_url: 'https://b.example/' },
+        ]);
+      }
+      updates.push(sqlText(query));
+      return rowsResult([]);
+    });
+    const service = new LinkVerifierService({ execute } as unknown as Database, makeEnv());
+    // Stub the TLS probe so the test never opens a socket.
+    jest
+      .spyOn(service as unknown as { probeCert: (h: string) => Promise<unknown> }, 'probeCert')
+      .mockResolvedValue({ valid: true, daysToExpiry: 42 });
+
+    const res = await service.verifyCerts(AUDIT_ID);
+
+    expect(res).toEqual({ hostsChecked: 2 }); // a.example + b.example
+    expect(updates).toHaveLength(2);
+    for (const u of updates) expect(u).toContain('update pages');
+  });
+
+  it('never throws and reports zero when the pass errors (best-effort)', async () => {
+    process.env.SECURITY_VERIFY_ENABLED = '1';
+    const execute = jest.fn(async () => {
+      throw new Error('boom');
+    });
+    const service = new LinkVerifierService({ execute } as unknown as Database, makeEnv());
+    await expect(service.verifyCerts(AUDIT_ID)).resolves.toEqual({ hostsChecked: 0 });
   });
 });

@@ -403,6 +403,406 @@ export const REMEDIATION: Record<string, Remediation> = {
     impact: 3,
     effort: 4,
   },
+
+  // ── meta.opengraph (Open Graph / Twitter Card) ──────────────────────────────
+  'meta.opengraph': {
+    whyItMatters:
+      'Open Graph and Twitter Card tags control the title, description, and image shown when a ' +
+      'page is shared on social platforms and chat apps. Missing or invalid tags produce ugly, ' +
+      'low-context preview cards that depress click-through from social referral traffic.',
+    howToFix:
+      'Add og:title, og:description, og:image, og:url and og:type to each page’s <head>, plus a ' +
+      'twitter:card (summary_large_image for rich previews). Use an absolute https image URL ≥ ' +
+      '1200×630.',
+    snippet:
+      '<meta property="og:title" content="Best Gym in Kyiv"><meta property="og:image" content="https://example.com/preview.jpg"><meta name="twitter:card" content="summary_large_image">',
+    expectedImpact: 'Richer social preview cards and higher click-through on shared links.',
+    docLink: 'https://developers.facebook.com/docs/sharing/webmasters/',
+    impact: 2,
+    effort: 1,
+  },
+
+  // ── schema.* (Structured data / JSON-LD) ────────────────────────────────────
+  'schema.missing': {
+    whyItMatters:
+      'Without Schema.org structured data, search engines must infer page meaning from prose and ' +
+      'the page is ineligible for rich results (review stars, FAQs, breadcrumbs, business cards), ' +
+      'losing SERP real estate to competitors that mark up their content.',
+    howToFix:
+      'Add JSON-LD structured data appropriate to the page type — Organization/LocalBusiness ' +
+      'site-wide, plus BreadcrumbList, Product, Article, or FAQPage where they apply.',
+    snippet: '<script type="application/ld+json">{ "@context":"https://schema.org","@type":"Organization" }</script>',
+    expectedImpact: 'Eligibility for rich results and clearer entity understanding.',
+    docLink: `${GSC}/appearance/structured-data/intro-structured-data`,
+    impact: 3,
+    effort: 3,
+  },
+  'schema.invalid': {
+    whyItMatters:
+      'JSON-LD that fails to parse is ignored entirely by search engines, so any rich-result ' +
+      'eligibility the markup was meant to provide is silently lost.',
+    howToFix:
+      'Fix the JSON syntax error (trailing commas, unescaped quotes, malformed nesting) so the ' +
+      'block parses, then validate with the Rich Results Test.',
+    expectedImpact: 'Restores the structured data so it can drive rich results again.',
+    docLink: `${GSC}/appearance/structured-data/intro-structured-data`,
+    impact: 3,
+    effort: 2,
+  },
+  'schema.incomplete': {
+    whyItMatters:
+      'Structured data missing required or recommended properties is often disqualified from rich ' +
+      'results — the markup parses but Google rejects it for the enhanced SERP feature.',
+    howToFix:
+      'Add the missing required/recommended properties for the declared @type (consult the rich ' +
+      'result feature guide for that type) and re-test.',
+    expectedImpact: 'Brings the markup up to rich-result eligibility thresholds.',
+    docLink: `${GSC}/appearance/structured-data/intro-structured-data`,
+    impact: 2,
+    effort: 2,
+  },
+  'schema.localbusiness': {
+    whyItMatters:
+      'For a local business, LocalBusiness structured data with consistent NAP (name, address, ' +
+      'phone), geo coordinates, and opening hours powers the knowledge panel and local-pack ' +
+      'eligibility; missing or inconsistent NAP weakens local ranking and trust.',
+    howToFix:
+      'Add LocalBusiness JSON-LD with name, address (PostalAddress), telephone, geo, openingHours, ' +
+      'and url; keep the NAP identical to Google Business Profile and on-page footer.',
+    snippet:
+      '<script type="application/ld+json">{ "@context":"https://schema.org","@type":"LocalBusiness","name":"Olimp Strong","telephone":"+380…" }</script>',
+    expectedImpact: 'Stronger local-pack/knowledge-panel eligibility and NAP trust.',
+    docLink: `${GSC}/appearance/structured-data/local-business`,
+    impact: 3,
+    effort: 3,
+  },
+
+  // ── robots.* (robots.txt) ───────────────────────────────────────────────────
+  'robots.blocks-important': {
+    whyItMatters:
+      'A robots.txt rule that disallows the whole site, important sections, or CSS/JS assets can ' +
+      'de-index real pages or block Google from rendering them — one bad line can remove a site ' +
+      'from search. An unreachable robots.txt is treated as "disallow everything".',
+    howToFix:
+      'Remove or narrow Disallow rules that cover indexable pages; never block CSS/JS needed to ' +
+      'render the page; ensure robots.txt returns 200 and declares the Sitemap: directive.',
+    snippet: 'User-agent: *\nAllow: /\nSitemap: https://example.com/sitemap.xml',
+    expectedImpact: 'Restores crawlability/indexability of unintentionally blocked content.',
+    docLink: `${GSC}/crawling-indexing/robots/intro`,
+    impact: 5,
+    effort: 1,
+  },
+
+  // ── sitemap.* (XML sitemap) ─────────────────────────────────────────────────
+  'sitemap.invalid': {
+    whyItMatters:
+      'A malformed or oversized XML sitemap can be rejected wholesale by search engines, so none ' +
+      'of the listed URLs benefit from the faster, more complete discovery a sitemap provides.',
+    howToFix:
+      'Fix the XML so it is well-formed and within limits (≤ 50,000 URLs / 50MB uncompressed per ' +
+      'file; split into a sitemap index if larger), then resubmit in Search Console.',
+    expectedImpact: 'A valid sitemap restores reliable discovery of listed URLs.',
+    docLink: `${GSC}/crawling-indexing/sitemaps/build-sitemap`,
+    impact: 3,
+    effort: 2,
+  },
+  'sitemap.url-not-200': {
+    whyItMatters:
+      'URLs listed in the sitemap that return non-200 statuses (404, 301, 5xx) waste crawl budget ' +
+      'and signal a stale, low-quality sitemap, eroding trust in the rest of the file.',
+    howToFix:
+      'Keep the sitemap in sync with live, canonical, 200-OK URLs only — remove redirected, ' +
+      'broken, or non-canonical entries.',
+    expectedImpact: 'A clean sitemap focuses crawl budget on real, indexable pages.',
+    docLink: `${GSC}/crawling-indexing/sitemaps/build-sitemap`,
+    impact: 2,
+    effort: 2,
+  },
+  'sitemap.noindex-url': {
+    whyItMatters:
+      'Listing a noindex (or non-self-canonical) URL in the sitemap sends search engines a ' +
+      'contradictory signal — "discover and index this" vs. "do not index this" — which wastes ' +
+      'crawl budget and muddies indexing intent.',
+    howToFix:
+      'Include only indexable, self-canonical URLs in the sitemap; drop any URL that is noindex or ' +
+      'canonicalizes elsewhere.',
+    expectedImpact: 'Removes conflicting indexing signals and tightens crawl focus.',
+    docLink: `${GSC}/crawling-indexing/sitemaps/build-sitemap`,
+    impact: 2,
+    effort: 2,
+  },
+
+  // ── links.external-redirect ────────────────────────────────────────────────
+  'links.external-redirect': {
+    whyItMatters:
+      'Outbound links that resolve through a 3xx redirect add an extra round-trip for users and ' +
+      'crawlers and can point at content the destination has since moved. They are lower-impact ' +
+      'than broken links but signal stale references.',
+    howToFix: 'Update the link to point directly at the redirect target (the final URL).',
+    expectedImpact: 'Removes a needless hop on outbound navigation; keeps references current.',
+    docLink: `${GSC}/crawling-indexing/301-redirects`,
+    impact: 1,
+    effort: 1,
+  },
+
+  // ── image.oversized ────────────────────────────────────────────────────────
+  'image.oversized': {
+    whyItMatters:
+      'Oversized image files are the most common cause of slow LCP and poor Core Web Vitals: every ' +
+      'extra kilobyte delays render and wastes the visitor’s bandwidth, especially on mobile.',
+    howToFix:
+      'Compress the image and serve it at the displayed size; use responsive srcset so smaller ' +
+      'viewports download smaller files, and prefer modern formats (WebP/AVIF).',
+    expectedImpact: 'Faster LCP and page load; lower bandwidth; better mobile experience.',
+    docLink: 'https://web.dev/articles/optimize-lcp',
+    impact: 3,
+    effort: 3,
+  },
+
+  // ── image.legacy-format ────────────────────────────────────────────────────
+  'image.legacy-format': {
+    whyItMatters:
+      'Legacy raster formats (JPEG/PNG/GIF) are typically 25–50% larger than the equivalent WebP or ' +
+      'AVIF, inflating page weight and slowing LCP for no visual benefit.',
+    howToFix:
+      'Serve next-gen formats (WebP or AVIF) with a <picture> fallback, or enable automatic format ' +
+      'negotiation at your CDN/image service.',
+    snippet:
+      '<picture><source srcset="/hero.avif" type="image/avif"><img src="/hero.jpg" alt="…"></picture>',
+    expectedImpact: 'Smaller image transfers and faster LCP with identical visual quality.',
+    docLink: 'https://web.dev/articles/serve-images-webp',
+    impact: 2,
+    effort: 3,
+  },
+
+  // ── image.no-dimensions ────────────────────────────────────────────────────
+  'image.no-dimensions': {
+    whyItMatters:
+      'An <img> without intrinsic width/height gives the browser no space to reserve, so content ' +
+      'jumps as the image loads — a direct cause of Cumulative Layout Shift (CLS) and the PSI ' +
+      'unsized-images flag.',
+    howToFix:
+      'Add explicit width and height attributes (or a CSS aspect-ratio) to every <img> so the ' +
+      'browser can reserve layout space before the image loads.',
+    snippet: '<img src="/hero.jpg" width="1200" height="630" alt="…">',
+    expectedImpact: 'Eliminates image-driven layout shift; improves CLS.',
+    docLink: 'https://web.dev/articles/optimize-cls',
+    impact: 2,
+    effort: 2,
+  },
+
+  // ── image.responsive ───────────────────────────────────────────────────────
+  'image.responsive': {
+    whyItMatters:
+      'A large image served without srcset forces every device — including small phones — to ' +
+      'download the same full-size file, wasting bandwidth and slowing LCP on the viewports that ' +
+      'can least afford it.',
+    howToFix:
+      'Provide a srcset with multiple widths plus a sizes attribute so the browser picks the ' +
+      'smallest file that fits the layout.',
+    snippet:
+      '<img src="/hero-800.jpg" srcset="/hero-400.jpg 400w, /hero-800.jpg 800w" sizes="100vw" alt="…">',
+    expectedImpact: 'Right-sized image downloads per device; faster mobile LCP.',
+    docLink: 'https://web.dev/articles/serve-responsive-images',
+    impact: 2,
+    effort: 3,
+  },
+
+  // ── image.lazy-loading ─────────────────────────────────────────────────────
+  'image.lazy-loading': {
+    whyItMatters:
+      'Below-the-fold images that load eagerly compete with the hero/LCP element for bandwidth and ' +
+      'delay first render. Native lazy-loading defers them until they are about to enter the ' +
+      'viewport.',
+    howToFix:
+      'Add loading="lazy" to images that start below the fold; keep the LCP / above-the-fold image ' +
+      'eager so it is not delayed.',
+    snippet: '<img src="/gallery-7.jpg" loading="lazy" width="600" height="400" alt="…">',
+    expectedImpact: 'Less bandwidth contention at load; faster initial render.',
+    docLink: 'https://web.dev/articles/browser-level-image-lazy-loading',
+    impact: 1,
+    effort: 1,
+  },
+
+  // ── image.alt-quality ──────────────────────────────────────────────────────
+  'image.alt-quality': {
+    whyItMatters:
+      'Alt text that is just the filename, excessively long, or a keyword-stuffed comma list gives ' +
+      'screen-reader users and image search no useful description and can read as manipulative.',
+    howToFix:
+      'Write concise, natural-language alt that describes what the image shows in context; avoid ' +
+      'filenames, keyword lists, and very long sentences.',
+    snippet: '<img src="/floor.jpg" alt="Main training floor at Olimp Strong gym">',
+    expectedImpact: 'Better accessibility and image-search relevance; cleaner on-page context.',
+    docLink: `${GSC}/appearance/google-images`,
+    impact: 1,
+    effort: 2,
+  },
+
+  // ── content.* (feature 08) ──────────────────────────────────────────────
+  'content.headings-hierarchy': {
+    whyItMatters:
+      'A logical heading outline (one H1, no skipped levels, no empty headings) is both an ' +
+      'accessibility (WCAG) signal and a content-structure signal search engines use to understand ' +
+      'a page. Skips and missing/duplicate H1s muddy that structure.',
+    howToFix:
+      'Use exactly one H1, then nest H2→H3 without skipping levels; never leave a heading empty or ' +
+      'use headings purely for styling.',
+    snippet: '<h1>Page topic</h1><h2>Section</h2><h3>Sub-section</h3>',
+    expectedImpact: 'Clearer document structure for crawlers and screen readers.',
+    docLink: `${GSC}/appearance/structured-data`,
+    impact: 2,
+    effort: 2,
+  },
+  'content.thin': {
+    whyItMatters:
+      'Pages with very little content rarely satisfy search intent, seldom rank, and dilute crawl ' +
+      'budget across the site.',
+    howToFix:
+      'Expand thin pages with substantive, original content that fully answers the query, or ' +
+      'consolidate/noindex pages that cannot justify standalone value.',
+    expectedImpact: 'Higher-quality indexable pages; better crawl-budget allocation.',
+    docLink: `${GSC}/fundamentals/creating-helpful-content`,
+    impact: 3,
+    effort: 3,
+  },
+  'index.lang-viewport': {
+    whyItMatters:
+      'A missing <html lang> hurts internationalization and accessibility, a missing charset risks ' +
+      'mojibake, and a missing viewport breaks mobile rendering — a direct mobile-usability signal.',
+    howToFix:
+      'Declare <html lang="…">, a <meta charset="utf-8">, and a responsive ' +
+      '<meta name="viewport" content="width=device-width, initial-scale=1"> on every page.',
+    snippet:
+      '<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">',
+    expectedImpact: 'Correct rendering and language/accessibility signals across devices.',
+    docLink: `${GSC}/specialty/international/localized-versions`,
+    impact: 2,
+    effort: 1,
+  },
+  'dupe.near-content': {
+    whyItMatters:
+      'Near-duplicate pages (boilerplate templates differing by a few words) compete for the same ' +
+      'queries and split ranking signals even though their content hashes differ, so exact-dup ' +
+      'detection misses them.',
+    howToFix:
+      'Differentiate near-duplicate pages with genuinely distinct content, or consolidate them under ' +
+      'one canonical URL when they serve the same intent.',
+    snippet: '<link rel="canonical" href="https://example.com/the-one-true-url">',
+    expectedImpact: 'Consolidates ranking signals; reduces template-driven duplication.',
+    docLink: `${GSC}/crawling-indexing/consolidate-duplicate-urls`,
+    impact: 2,
+    effort: 3,
+  },
+
+  // ── security.* (feature 11) ─────────────────────────────────────────────
+  'security.mixed-content': {
+    whyItMatters:
+      'An HTTPS page that loads HTTP sub-resources triggers a mixed-content warning, downgrades the ' +
+      'padlock, and is often blocked outright by browsers — breaking the page and eroding trust.',
+    howToFix:
+      'Serve every sub-resource (scripts, styles, fonts, iframes, media) over HTTPS; update absolute ' +
+      'http:// references and prefer protocol-relative or https:// URLs.',
+    snippet: '<script src="https://cdn.example.com/app.js"></script>',
+    expectedImpact: 'Restores a secure padlock and prevents browser-blocked resources.',
+    docLink: 'https://web.dev/articles/fixing-mixed-content',
+    impact: 4,
+    effort: 2,
+  },
+  'security.https': {
+    whyItMatters:
+      'HTTPS is a confirmed (light) ranking signal and a hard trust requirement. A page served over ' +
+      'plaintext HTTP is marked "Not secure" and exposes users to tampering.',
+    howToFix:
+      'Serve the site over HTTPS with a valid certificate and 301-redirect every http:// URL to its ' +
+      'https:// equivalent.',
+    snippet: 'RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]',
+    expectedImpact: 'Secure transport, the page-experience HTTPS signal, and user trust.',
+    docLink: `${GSC}/crawling-indexing/https`,
+    impact: 4,
+    effort: 2,
+  },
+  'security.hsts': {
+    whyItMatters:
+      'Without HSTS, the first request to a host can still be made over insecure HTTP, leaving a ' +
+      'downgrade/SSL-strip window even when the site supports HTTPS.',
+    howToFix:
+      'Add a Strict-Transport-Security response header (e.g. max-age=63072000; includeSubDomains) ' +
+      'on HTTPS responses.',
+    snippet: 'Strict-Transport-Security: max-age=63072000; includeSubDomains',
+    expectedImpact: 'Forces HTTPS for the host, closing the downgrade window.',
+    docLink: 'https://developer.mozilla.org/docs/Web/HTTP/Headers/Strict-Transport-Security',
+    impact: 1,
+    effort: 1,
+  },
+  'security.headers': {
+    whyItMatters:
+      'Missing X-Content-Type-Options: nosniff allows MIME-sniffing attacks, and a missing ' +
+      'Content-Security-Policy leaves the page without a baseline XSS/content-injection defense — ' +
+      'both weaken the trust/quality profile of the site.',
+    howToFix:
+      'Send X-Content-Type-Options: nosniff and a Content-Security-Policy header tuned to the ' +
+      'resources the page actually loads.',
+    snippet: "X-Content-Type-Options: nosniff\nContent-Security-Policy: default-src 'self'",
+    expectedImpact: 'Baseline hardening against MIME-sniffing and content injection.',
+    docLink: 'https://developer.mozilla.org/docs/Web/HTTP/Headers/Content-Security-Policy',
+    impact: 1,
+    effort: 2,
+  },
+  'security.cert': {
+    whyItMatters:
+      'An expired or invalid TLS certificate makes browsers block the page with a full-screen ' +
+      'security interstitial, instantly destroying traffic and trust.',
+    howToFix:
+      'Renew the certificate before expiry (automate via ACME/Let’s Encrypt) and ensure the full ' +
+      'chain and host name are valid.',
+    expectedImpact: 'Prevents browser security interstitials; keeps the site reachable.',
+    docLink: `${GSC}/crawling-indexing/https`,
+    impact: 5,
+    effort: 1,
+  },
+
+  // ── mobile.* (feature 11) ───────────────────────────────────────────────
+  'mobile.viewport': {
+    whyItMatters:
+      'Without a responsive viewport meta (width=device-width), or with pinned scaling ' +
+      '(user-scalable=no / maximum-scale=1), pages render at desktop width on phones and block ' +
+      'pinch-zoom — a direct mobile-usability and accessibility failure.',
+    howToFix:
+      'Add <meta name="viewport" content="width=device-width, initial-scale=1"> and remove any ' +
+      'user-scalable=no / maximum-scale pinning.',
+    snippet: '<meta name="viewport" content="width=device-width, initial-scale=1">',
+    expectedImpact: 'Correct responsive rendering and zoom on mobile devices.',
+    docLink: 'https://web.dev/articles/responsive-web-design-basics',
+    impact: 3,
+    effort: 1,
+  },
+  'mobile.usability': {
+    whyItMatters:
+      'Illegibly small fonts and fixed-width containers wider than the screen force horizontal ' +
+      'scrolling and squinting on phones — the fixable root causes behind PSI mobile-usability flags.',
+    howToFix:
+      'Use relative/responsive font sizes ≥ 12px and fluid widths (%/max-width) instead of fixed ' +
+      'pixel widths so content reflows to the viewport.',
+    expectedImpact: 'Legible, reflowing mobile layouts; fewer PSI usability flags.',
+    docLink: 'https://web.dev/articles/responsive-web-design-basics',
+    impact: 2,
+    effort: 3,
+  },
+
+  // ── page.* (feature 11, P3) ─────────────────────────────────────────────
+  'page.weight': {
+    whyItMatters:
+      'Pages that ship too many bytes or too many requests load slowly, hurting LCP and Core Web ' +
+      'Vitals — especially on mobile networks.',
+    howToFix:
+      'Cut total page weight: compress and right-size images, defer/split JS, remove unused CSS, and ' +
+      'reduce the number of separate resource requests.',
+    expectedImpact: 'Faster loads and better Core Web Vitals.',
+    docLink: 'https://web.dev/explore/fast',
+    impact: 2,
+    effort: 4,
+  },
 };
 
 /**
