@@ -85,7 +85,7 @@ export class AuditsController {
     @Body(new ZodValidationPipe(CreateAuditBody)) body: CreateAuditBody,
     @CurrentUser() user: AuthUser,
   ): Promise<{ id: string; status: 'created' }> {
-    const id = await this.audits.create(body.url, user.id);
+    const id = await this.audits.create(body.url, user.id, body.profile);
     // Fire-and-forget: must NOT be awaited — the request returns while the
     // pipeline runs out-of-band. `runInBackground` never rejects.
     void this.audits.runInBackground(id);

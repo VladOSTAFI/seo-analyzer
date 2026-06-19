@@ -4,6 +4,22 @@ import type { ScoreResult } from '../../report/report.score';
 import { users } from './users';
 
 /**
+ * Per-audit scan profile (depth knob for the enrich stage's live network probes).
+ *
+ * - `standard` (default): the fast audit — runs everything EXCEPT the two SLOW
+ *   live probes (image-weight probe and external-link probe). The cheap TLS cert
+ *   probe still runs (env-gated as before).
+ * - `full`: also runs the image and external-link probes (each still subject to
+ *   its ops-level env kill-switch — a heavy probe runs iff profile is `full` AND
+ *   its env flag is enabled).
+ *
+ * Single-sourced here and reused across the DTO/service/enrich layers rather than
+ * restating the string literals. Stored as `text` (not a pgEnum) to stay
+ * migration-light — the value space is validated by Zod at the API boundary.
+ */
+export type ScanProfile = 'standard' | 'full';
+
+/**
  * Shape of the parsed robots.txt analysis persisted on the audit (feature 02).
  * One robots.txt per site, so it lives on the audit row (not a child table).
  * Null until the discovery pass runs (= not assessed).
@@ -48,6 +64,12 @@ export const audits = pgTable(
     status: auditStatus('status').notNull().default('created'),
     failedStage: text('failed_stage'), // set when status = 'failed'
     reportPath: text('report_path'), // set in Phase 5
+    // Per-audit scan profile (depth knob): 'standard' (fast — skips the two SLOW
+    // live probes) or 'full' (also runs the image + external-link probes). NOT
+    // NULL with a 'standard' default so existing rows backfill to the fast audit.
+    // Typed as ScanProfile via $type so reads/writes are the narrow union, not a
+    // bare string.
+    scanProfile: text('scan_profile').notNull().default('standard').$type<ScanProfile>(),
     // Live pipeline progress ({ stage, startedAt }), updated per stage so a
     // polling client can distinguish the long PSI stage from analysis without a
     // new audit_status enum value. Best-effort; null until the first stage runs.

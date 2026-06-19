@@ -4,7 +4,7 @@ import { useActionState, useEffect, useId, useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Plus } from "lucide-react";
+import { ChevronDown, Plus } from "lucide-react";
 
 import {
   getStartAuditSchema,
@@ -18,6 +18,12 @@ import { initialStartAuditState } from "@/app/[locale]/(dashboard)/audits/start-
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 type StartStrings = Dashboard["startForm"];
 
@@ -29,19 +35,59 @@ type StartStrings = Dashboard["startForm"];
  * Locale: the same (localized) zod schema runs client-side for instant feedback;
  * a hidden `locale` field tells the action which language to validate/respond
  * in; success routes to the locale-correct detail page.
+ *
+ * Split submit: the visible primary button submits `profile=standard` (a fast
+ * audit); the caret opens a menu whose item submits `profile=full` (slower —
+ * also checks image weight & external links). A clicked submit button
+ * contributes its own `name`/`value` to the FormData, so the choice rides along
+ * the existing Server Action with no extra state. Both buttons disable while a
+ * submission is pending (`useFormStatus`).
  */
-function SubmitButton({ strings }: { strings: StartStrings }) {
+function SubmitButtons({ strings }: { strings: StartStrings }) {
   const { pending } = useFormStatus();
   return (
-    <Button
-      type="submit"
-      disabled={pending}
-      aria-disabled={pending}
-      className="h-11 px-5 text-sm font-medium"
-    >
-      <Plus aria-hidden />
-      {pending ? strings.starting : strings.startAudit}
-    </Button>
+    <div className="flex">
+      <Button
+        type="submit"
+        name="profile"
+        value="standard"
+        disabled={pending}
+        aria-disabled={pending}
+        className="h-11 rounded-r-none px-5 text-sm font-medium"
+      >
+        <Plus aria-hidden />
+        {pending ? strings.starting : strings.startAudit}
+      </Button>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            type="button"
+            disabled={pending}
+            aria-disabled={pending}
+            aria-label={strings.fullAudit}
+            className="h-11 rounded-l-none border-l border-l-primary-foreground/20 px-2.5"
+          >
+            <ChevronDown aria-hidden />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="min-w-72">
+          <DropdownMenuItem asChild disabled={pending}>
+            <button
+              type="submit"
+              name="profile"
+              value="full"
+              disabled={pending}
+              className="w-full flex-col items-start gap-0.5"
+            >
+              <span className="font-medium">{strings.fullAudit}</span>
+              <span className="text-xs text-muted-foreground group-focus/dropdown-menu-item:text-accent-foreground">
+                {strings.fullAuditHint}
+              </span>
+            </button>
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
   );
 }
 
@@ -131,7 +177,7 @@ export function StartAuditForm({
             </p>
           )}
         </div>
-        <SubmitButton strings={strings} />
+        <SubmitButtons strings={strings} />
       </div>
     </form>
   );

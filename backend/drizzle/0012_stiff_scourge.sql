@@ -1,0 +1,1 @@
+ALTER TABLE "audits" ADD COLUMN "scan_profile" text DEFAULT 'standard' NOT NULL;

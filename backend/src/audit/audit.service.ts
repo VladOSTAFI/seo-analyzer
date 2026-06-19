@@ -1,7 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.types';
-import { audits } from '../db/schema';
+import { audits, type ScanProfile } from '../db/schema';
 import { CrawlService } from '../crawl/crawl.service';
 import { EnrichService } from '../enrich/enrich.service';
 import { AnalyzeService } from '../analyze/analyze.service';
@@ -53,6 +53,12 @@ type StageName = 'crawl' | 'enrich' | 'analyze' | 'perf' | 'report';
  * COVERAGE (Item 12): at the END of runAll a consolidated coverage manifest is
  * assembled from the stage summaries and lightweight COUNT queries, then
  * persisted to `audits.coverage`. Best-effort.
+ *
+ * SCAN PROFILE: {@link create}/{@link createAndRun} accept a per-audit
+ * `scanProfile` (`'standard'` default | `'full'`) that is persisted on the row and
+ * read by the enrich stage to gate the two SLOW live probes. The coverage manifest
+ * records the profile and whether the image/external probes were skipped because
+ * of it, so the report can honestly say "not assessed — standard scan".
  */
 @Injectable()
 export class AuditService {
@@ -70,39 +76,49 @@ export class AuditService {
 
   /**
    * Validate `url`, insert a fresh `audits` row (status defaults to `created`)
-   * owned by `ownerId`, log the new id, then run the full pipeline against it.
-   * This is what `audit:run <url>` calls — a cold start from URL to finished
-   * `.xlsx`.
+   * owned by `ownerId` with the chosen `profile`, log the new id, then run the
+   * full pipeline against it. This is what `audit:run <url>` calls — a cold start
+   * from URL to finished `.xlsx`.
    *
    * `ownerId` (Phase A3) stamps the creator on the row: the HTTP layer passes
    * `req.user.id`; the unauthenticated CLI passes `null` (the column is nullable
    * for that migration window — see AUTHORIZATION_PLAN §5/§10).
    *
+   * `profile` selects the enrich-stage probe depth (default `'standard'`).
+   *
    * URL validation reuses {@link parseStartUrl} so the run command shares the
    * same http(s) contract as `audit:create`. An invalid URL rejects here, BEFORE
    * any row is inserted or any stage runs.
    */
-  async createAndRun(url: string, ownerId: string | null): Promise<RunResult> {
-    const auditId = await this.create(url, ownerId);
+  async createAndRun(
+    url: string,
+    ownerId: string | null,
+    profile: ScanProfile = 'standard',
+  ): Promise<RunResult> {
+    const auditId = await this.create(url, ownerId, profile);
     return this.runAll(auditId);
   }
 
   /**
    * Validate `url`, insert a fresh `audits` row (status `created`) owned by
-   * `ownerId`, and return its id WITHOUT running the pipeline. The REST layer
-   * (Phase 7) uses this to acknowledge a `POST /audits` synchronously (returning
-   * the id) and then drive the pipeline in the background via
-   * {@link runInBackground}.
+   * `ownerId` with the chosen `profile`, and return its id WITHOUT running the
+   * pipeline. The REST layer (Phase 7) uses this to acknowledge a `POST /audits`
+   * synchronously (returning the id) and then drive the pipeline in the background
+   * via {@link runInBackground}.
    *
    * `ownerId` (Phase A3) is the creating principal: `req.user.id` from the HTTP
-   * caller, or `null` from the unauthenticated CLI. URL validation reuses
-   * {@link parseStartUrl}, so an invalid URL rejects here BEFORE any row is
-   * inserted — the controller maps that to HTTP 400.
+   * caller, or `null` from the unauthenticated CLI. `profile` defaults to
+   * `'standard'`. URL validation reuses {@link parseStartUrl}, so an invalid URL
+   * rejects here BEFORE any row is inserted — the controller maps that to HTTP 400.
    */
-  async create(url: string, ownerId: string | null): Promise<string> {
+  async create(
+    url: string,
+    ownerId: string | null,
+    profile: ScanProfile = 'standard',
+  ): Promise<string> {
     const startUrl = parseStartUrl(url);
-    const auditId = await this.createAudit(startUrl, ownerId);
-    this.logger.log(`Created audit ${auditId} for ${startUrl}`);
+    const auditId = await this.createAudit(startUrl, ownerId, profile);
+    this.logger.log(`Created audit ${auditId} for ${startUrl} profile=${profile}`);
     return auditId;
   }
 
@@ -132,15 +148,19 @@ export class AuditService {
   }
 
   /**
-   * Insert a new audit row owned by `ownerId` and return its id. Isolated as a
-   * tiny seam so the Drizzle insert chain can be stubbed in unit tests without
-   * mocking the whole pipeline. Mirrors the exact idiom in
+   * Insert a new audit row owned by `ownerId` with the chosen `profile` and return
+   * its id. Isolated as a tiny seam so the Drizzle insert chain can be stubbed in
+   * unit tests without mocking the whole pipeline. Mirrors the exact idiom in
    * {@link import('../cli/create.command').CreateCommand}.
    */
-  private async createAudit(startUrl: string, ownerId: string | null): Promise<string> {
+  private async createAudit(
+    startUrl: string,
+    ownerId: string | null,
+    profile: ScanProfile,
+  ): Promise<string> {
     const [row] = await this.db
       .insert(audits)
-      .values(buildAuditPayload(startUrl, ownerId))
+      .values(buildAuditPayload(startUrl, ownerId, profile))
       .returning({ id: audits.id });
     if (!row) {
       throw new Error('Insert returned no row; audit was not created.');
@@ -161,8 +181,8 @@ export class AuditService {
    */
   async runAll(auditId: string): Promise<RunResult> {
     const startedAt = Date.now();
-    await this.auditRepo.assertExists(auditId);
-    this.logger.log(`Pipeline start audit=${auditId}`);
+    const audit = await this.auditRepo.assertExists(auditId);
+    this.logger.log(`Pipeline start audit=${auditId} profile=${audit.scanProfile}`);
 
     const crawl = await this.runStage(
       'crawl',
@@ -201,7 +221,14 @@ export class AuditService {
     );
 
     // ── Item 12: assemble and persist coverage manifest (best-effort) ──────────
-    await this.persistCoverage(auditId, crawl, enrich, analyze, performance).catch((err) => {
+    await this.persistCoverage(
+      auditId,
+      audit.scanProfile,
+      crawl,
+      enrich,
+      analyze,
+      performance,
+    ).catch((err) => {
       const reason = err instanceof Error ? err.message : String(err);
       this.logger.warn(`Coverage persist failed audit=${auditId}: ${reason}`);
     });
@@ -234,9 +261,14 @@ export class AuditService {
    *
    * Reads `enrich` fields defensively (optional chaining + fallbacks) so this
    * compiles whether or not the enrich agent has added the new fields yet.
+   *
+   * `scanProfile` is recorded on the manifest, and the image/external "probed"
+   * flags reflect a profile skip (a `standard` scan does NOT run those probes, so
+   * the report can honestly say "not assessed — standard scan").
    */
   private async persistCoverage(
     auditId: string,
+    scanProfile: ScanProfile,
     crawl: CrawlSummary,
     enrich: EnrichSummary,
     // Inert rules are now counted from the findings table (not analyze.byRule),
@@ -281,6 +313,13 @@ export class AuditService {
         ? Number((enrich as unknown as Record<string, unknown>).externalsVerified)
         : 0;
 
+    // ── Profile gate: the two SLOW probes run only on a `full` scan ────────────
+    // A `standard` scan skips them, so the report should NOT imply they were
+    // assessed. (Even on `full`, a probe may be a no-op if its env flag is off —
+    // hence `probed` reflects the profile decision, not a per-run success count.)
+    const imagesProbed = scanProfile === 'full';
+    const externalsProbed = scanProfile === 'full';
+
     // ── Inert rules = rules with 0 PERSISTED findings ────────────────────────
     // Count from the findings table, NOT analyze.byRule: the `perf.*` rules run
     // in the perf stage (the analyze stage sees an empty performance table and
@@ -307,16 +346,19 @@ export class AuditService {
     const capHit = crawl.pages >= crawlCap;
 
     const manifest: CoverageManifest = {
+      scanProfile,
       pagesCrawled: crawl.pages,
       crawlCap,
       capHit,
       externalLinks: {
         total: externalLinksTotal,
         verified: externalsVerified,
+        probed: externalsProbed,
       },
       images: {
         total: crawl.images,
         statusEnriched: imagesStatusEnriched,
+        probed: imagesProbed,
       },
       cwvSource,
       rulesInert,
@@ -324,7 +366,7 @@ export class AuditService {
 
     await this.auditRepo.setCoverage(auditId, manifest as unknown as Record<string, unknown>);
     this.logger.log(
-      `Coverage manifest persisted audit=${auditId} ` +
+      `Coverage manifest persisted audit=${auditId} profile=${scanProfile} ` +
         `pages=${manifest.pagesCrawled} inertRules=${manifest.rulesInert.length}`,
     );
   }

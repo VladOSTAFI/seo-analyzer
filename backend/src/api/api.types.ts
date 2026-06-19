@@ -1,6 +1,7 @@
 import type { Confidence, Severity } from '../analyze/rule.types';
 import type { AuditStatus } from '../audit/audit.repository';
 import type { CoverageManifest } from '../report/report.types';
+import type { ScanProfile } from '../db/schema/audits';
 import type { ScoreResult } from '../report/report.score';
 import type { ActionSummary } from '../report/report.actions';
 
@@ -55,6 +56,8 @@ export interface AuditDto {
  * url) pairs so the headline reads "6 issues across 305 findings".
  */
 export interface AuditDetailDto extends AuditDto {
+  /** The scan profile this audit ran with ('standard' | 'full'). */
+  scanProfile: ScanProfile;
   findingsTotal: number;
   bySeverity: SeverityCounts;
   /** Live pipeline stage progress, null until the first stage starts. */

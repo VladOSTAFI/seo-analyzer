@@ -30,8 +30,14 @@ describe('parseStartUrl', () => {
 
 describe('buildAuditPayload', () => {
   it('produces an insert payload with the start URL and the owning principal (Phase A3)', () => {
+    // profile defaults to 'full' for the unauthenticated CLI (preserves the
+    // env-driven dev behavior where the heavy probes run when their flags are on).
     const payload = buildAuditPayload('https://example.com/', 'owner-1');
-    expect(payload).toEqual({ startUrl: 'https://example.com/', ownerId: 'owner-1' });
+    expect(payload).toEqual({
+      startUrl: 'https://example.com/',
+      ownerId: 'owner-1',
+      scanProfile: 'full',
+    });
     // status/id/timestamps are DB defaults — must NOT be set on the payload.
     expect(payload).not.toHaveProperty('status');
     expect(payload).not.toHaveProperty('id');
@@ -39,7 +45,11 @@ describe('buildAuditPayload', () => {
 
   it('carries a null ownerId for the unauthenticated CLI path', () => {
     const payload = buildAuditPayload('https://example.com/', null);
-    expect(payload).toEqual({ startUrl: 'https://example.com/', ownerId: null });
+    expect(payload).toEqual({
+      startUrl: 'https://example.com/',
+      ownerId: null,
+      scanProfile: 'full',
+    });
   });
 });
 
@@ -64,7 +74,11 @@ describe('CreateCommand.run', () => {
     expect(insert).toHaveBeenCalledWith(audits);
     // The CLI has no principal, so the new audit is owner-less (ownerId: null) —
     // the column is nullable precisely to allow this (Phase A3 / §10).
-    expect(values).toHaveBeenCalledWith({ startUrl: 'https://example.com/', ownerId: null });
+    expect(values).toHaveBeenCalledWith({
+      startUrl: 'https://example.com/',
+      ownerId: null,
+      scanProfile: 'full',
+    });
     expect(writeSpy).toHaveBeenCalledWith(`${id}\n`);
 
     writeSpy.mockRestore();

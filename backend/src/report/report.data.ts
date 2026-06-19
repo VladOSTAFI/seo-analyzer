@@ -26,7 +26,7 @@ export async function loadReportData(
   auditId: string,
 ): Promise<{ audit: Audit; findings: FindingRow[] }> {
   const auditResult = await db.execute(sql`
-    select id, start_url, status, failed_stage, report_path, progress, coverage, score,
+    select id, start_url, status, failed_stage, report_path, scan_profile, progress, coverage, score,
            robots_audit, sitemap_audit, owner_id, created_at, updated_at
     from audits
     where id = ${auditId}
@@ -46,6 +46,7 @@ export async function loadReportData(
     status: auditRow.status as Audit['status'],
     failedStage: (auditRow.failed_stage as string | null) ?? null,
     reportPath: (auditRow.report_path as string | null) ?? null,
+    scanProfile: (auditRow.scan_profile as Audit['scanProfile']) ?? 'standard',
     progress: (auditRow.progress as Audit['progress']) ?? null,
     coverage: (auditRow.coverage as Audit['coverage']) ?? null,
     score: (auditRow.score as Audit['score']) ?? null,

@@ -25,10 +25,11 @@ function f(
 function coverage(pagesCrawled: number): CoverageManifest {
   return {
     pagesCrawled,
+    scanProfile: 'standard',
     crawlCap: 500,
     capHit: false,
-    externalLinks: { total: 0, verified: 0 },
-    images: { total: 0, statusEnriched: 0 },
+    externalLinks: { total: 0, verified: 0, probed: false },
+    images: { total: 0, statusEnriched: 0, probed: false },
     cwvSource: { field: 0, originFallback: 0, lab: 0 },
     rulesInert: [],
   };

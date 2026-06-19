@@ -1,4 +1,5 @@
 import type { Confidence, Severity } from '../analyze/rule.types';
+import type { ScanProfile } from '../db/schema/audits';
 
 /**
  * Phase 5 report contract — the FROZEN seam between the rendering engine
@@ -100,16 +101,29 @@ export interface ReportSection {
  * Persisted to `audits.coverage` (jsonb) and surfaced on the API detail DTO.
  */
 export interface CoverageManifest {
+  /**
+   * The per-audit scan profile this run used. A `standard` scan deliberately
+   * skips the SLOW image/external-link probes, so consumers can say "not
+   * assessed — standard scan" rather than implying a clean result.
+   */
+  scanProfile: ScanProfile;
   /** Total pages crawled in this run. */
   pagesCrawled: number;
   /** The configured crawl page cap. */
   crawlCap: number;
   /** Whether the crawl hit the cap (pages === crawlCap). */
   capHit: boolean;
-  /** External link counts (crawled vs. verified by live HTTP probe). */
-  externalLinks: { total: number; verified: number };
-  /** Image counts (total crawled vs. status-enriched). */
-  images: { total: number; statusEnriched: number };
+  /**
+   * External link counts. `total` is crawled external links; `verified` is how
+   * many the live HTTP probe checked; `probed` is whether the external-link probe
+   * was even RUN this scan (false on a `standard` scan — i.e. not assessed).
+   */
+  externalLinks: { total: number; verified: number; probed: boolean };
+  /**
+   * Image counts. `total` crawled vs. `statusEnriched` (resolved status); `probed`
+   * is whether the image-weight probe was RUN this scan (false on `standard`).
+   */
+  images: { total: number; statusEnriched: number; probed: boolean };
   /** How many CWV data points came from each source. */
   cwvSource: { field: number; originFallback: number; lab: number };
   /**

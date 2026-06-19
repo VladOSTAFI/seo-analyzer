@@ -2,7 +2,7 @@ import { Inject, Logger } from '@nestjs/common';
 import { Command, CommandRunner } from 'nest-commander';
 import { InvalidArgumentError } from '../common/errors';
 import { DB, type Database } from '../db/db.types';
-import { audits, type NewAudit } from '../db/schema';
+import { audits, type NewAudit, type ScanProfile } from '../db/schema';
 
 /**
  * Validate and normalize a start URL. Accepts only http(s) URLs.
@@ -32,13 +32,23 @@ export function parseStartUrl(input: string | undefined): string {
 }
 
 /**
- * Build the insert payload for a new audit row from a validated start URL and an
- * owning user id (Phase A3). `ownerId` is NULLABLE on purpose: the CLI runs
- * unauthenticated and passes `null` (audits created before the seeded admin
- * exists), while the HTTP layer passes `req.user.id`. See AUTHORIZATION_PLAN §5/§10.
+ * Build the insert payload for a new audit row from a validated start URL, an
+ * owning user id (Phase A3), and a scan profile. `ownerId` is NULLABLE on purpose:
+ * the CLI runs unauthenticated and passes `null` (audits created before the
+ * seeded admin exists), while the HTTP layer passes `req.user.id`.
+ * See AUTHORIZATION_PLAN §5/§10.
+ *
+ * `profile` selects the enrich-stage probe depth: the unauthenticated CLI defaults
+ * it to `'full'` so the env-driven dev behavior is preserved (the heavy probes run
+ * when their env flags are on); the HTTP path passes the validated DTO value
+ * (which itself defaults to `'standard'`).
  */
-export function buildAuditPayload(startUrl: string, ownerId: string | null): NewAudit {
-  return { startUrl, ownerId };
+export function buildAuditPayload(
+  startUrl: string,
+  ownerId: string | null,
+  profile: ScanProfile = 'full',
+): NewAudit {
+  return { startUrl, ownerId, scanProfile: profile };
 }
 
 /**
@@ -46,6 +56,7 @@ export function buildAuditPayload(startUrl: string, ownerId: string | null): New
  * Inserts an audits row (status defaults to 'created') and prints the new UUID.
  * Runs UNAUTHENTICATED — there is no principal here, so `ownerId` is `null`
  * (the column is nullable precisely to allow this; A3 does not seed an admin).
+ * The CLI defaults the scan profile to `'full'` (see {@link buildAuditPayload}).
  */
 @Command({
   name: 'audit:create',

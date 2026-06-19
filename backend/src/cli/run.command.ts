@@ -33,7 +33,7 @@ export class RunCommand extends CommandRunner {
     void _options;
     const url = parseStartUrl(passedParams[0]);
 
-    const result = await this.audit.createAndRun(url, null);
+    const result = await this.audit.createAndRun(url, null, 'full');
 
     const line =
       `audit ${result.auditId} ${result.status} — ` +

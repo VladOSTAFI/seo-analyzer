@@ -39,6 +39,7 @@ function detail(overrides: Partial<AuditDetailDto> = {}): AuditDetailDto {
     status: 'done',
     failedStage: null,
     reportPath: null,
+    scanProfile: 'standard',
     createdAt: '2026-06-02T00:00:00.000Z',
     updatedAt: '2026-06-02T00:00:00.000Z',
     findingsTotal: 0,
@@ -77,10 +78,13 @@ describe('AuditsController.create (POST /audits)', () => {
     audits.create.mockResolvedValue(AUDIT_ID);
     audits.runInBackground.mockResolvedValue(undefined);
 
-    const result = await controller.create({ url: 'https://example.com' }, USER);
+    const result = await controller.create(
+      { url: 'https://example.com', profile: 'standard' },
+      USER,
+    );
 
     // Forwards the caller's id as the owner (Phase A3).
-    expect(audits.create).toHaveBeenCalledWith('https://example.com', USER.id);
+    expect(audits.create).toHaveBeenCalledWith('https://example.com', USER.id, 'standard');
     expect(audits.runInBackground).toHaveBeenCalledWith(AUDIT_ID);
     expect(result).toEqual({ id: AUDIT_ID, status: 'created' });
   });
@@ -91,7 +95,10 @@ describe('AuditsController.create (POST /audits)', () => {
     // A promise that never resolves — if the handler awaited it, this would hang.
     audits.runInBackground.mockReturnValue(new Promise<void>(() => {}));
 
-    const result = await controller.create({ url: 'https://example.com' }, USER);
+    const result = await controller.create(
+      { url: 'https://example.com', profile: 'standard' },
+      USER,
+    );
 
     expect(result).toEqual({ id: AUDIT_ID, status: 'created' });
     expect(audits.runInBackground).toHaveBeenCalledTimes(1);
