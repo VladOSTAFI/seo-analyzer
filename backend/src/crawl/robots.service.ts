@@ -31,6 +31,50 @@ const ASSET_DIR_HINTS = ['/css', '/js', '/javascript', '/assets', '/static', '/_
 const CRITICAL_AGENTS = ['*', 'googlebot'];
 
 /**
+ * Path markers for conventionally-blocked, non-content disallows (admin, auth,
+ * search, feeds, trackbacks, comment-reply links, caches, infra). Disallowing
+ * these is CORRECT SEO hygiene — they must never be reported as "important
+ * section blocked", even if the crawler happened to follow one. Matched as a
+ * case-insensitive substring of the disallow value.
+ */
+const BENIGN_DISALLOW_MARKERS = [
+  'wp-admin',
+  'wp-login',
+  'wp-register',
+  'wp-comments',
+  'wp-trackback',
+  'wp-feed',
+  'wp-json',
+  'xmlrpc',
+  'cgi-bin',
+  'trackback',
+  '/embed',
+  '/feed',
+  'comments/feed',
+  '/cache',
+  '/search',
+  'replytocom',
+  '/admin',
+  '/login',
+  '/cart',
+  '/checkout',
+  '/account',
+];
+
+/**
+ * Is this disallow a conventionally-blocked, non-content path (so it should NOT
+ * count as an "important section" block)? Any query-parameter filter (e.g.
+ * `*?s=`, `*utm*=`, `/*?replytocom*`) is benign by definition — it targets URL
+ * params, not crawlable content paths — as is any path matching a known
+ * hygiene/infra marker.
+ */
+function isBenignDisallow(path: string): boolean {
+  const lower = path.toLowerCase();
+  if (lower.includes('?') || lower.includes('=')) return true;
+  return BENIGN_DISALLOW_MARKERS.some((marker) => lower.includes(marker));
+}
+
+/**
  * robots.txt audit (feature 02). Best-effort, once-per-audit discovery sub-step:
  * fetches `${origin}/robots.txt`, parses the user-agent groups + `Sitemap:`
  * directives, and runs "important section" analysis against the crawled
@@ -252,10 +296,17 @@ export function analyzeRobots(parsed: ParsedRobots, ctx: AnalyzeContext): Robots
         continue;
       }
 
-      // Important-section block: the disallow prefix hits a crawled page, or an
-      // explicitly-configured important path.
-      const hits = ctx.crawledPaths.filter((p) => pathMatchesPrefix(p, path));
-      const isConfiguredImportant = ctx.importantPaths.some((imp) => path.startsWith(imp));
+      // Conventionally-blocked hygiene/infra paths (admin, auth, search, feeds,
+      // trackbacks, param filters) are CORRECT to disallow — never flag them.
+      if (isBenignDisallow(path)) continue;
+
+      // Important-section block: the disallow pattern hits a crawled content
+      // page, or matches an explicitly-configured important path prefix. A bare
+      // '/' configured prefix is ignored (it would match the whole site).
+      const hits = ctx.crawledPaths.filter((p) => pathMatchesPattern(p, path));
+      const isConfiguredImportant = ctx.importantPaths.some(
+        (imp) => imp !== '' && imp !== '/' && path.startsWith(imp),
+      );
       if (hits.length > 0 || isConfiguredImportant) {
         issues.push({
           kind: 'disallow-important',
@@ -294,18 +345,26 @@ function looksLikeAssetPath(path: string): boolean {
 }
 
 /**
- * robots.txt prefix match: a disallow value is a path prefix (with `*` wildcard
- * support, simplified to "starts-with up to the first `*`"). `$` anchors the
- * end. Pure + conservative.
+ * robots.txt path match against a crawled URL path. A disallow value is anchored
+ * at the start of the path (prefix match), the `*` wildcard matches any run of
+ * characters, and a trailing `$` anchors the end. Built as a regex so a pattern
+ * that merely starts with a wildcard (e.g. a leading-star "/feed" rule) matches
+ * the literal segment around the wildcard — NOT every path. Pure + conservative;
+ * never throws.
+ *
+ * Note: crawled paths are path-only (no query string), so query-parameter
+ * patterns (a "?s=" filter) never match here — those are handled as benign upstream.
  */
-function pathMatchesPrefix(path: string, disallow: string): boolean {
+function pathMatchesPattern(path: string, disallow: string): boolean {
   const anchored = disallow.endsWith('$');
-  const pattern = anchored ? disallow.slice(0, -1) : disallow;
-  const star = pattern.indexOf('*');
-  const prefix = star === -1 ? pattern : pattern.slice(0, star);
-  if (prefix === '') return true; // `Disallow: *` etc.
-  if (anchored && star === -1) return path === prefix;
-  return path.startsWith(prefix);
+  const raw = anchored ? disallow.slice(0, -1) : disallow;
+  if (raw === '') return false; // empty pattern blocks nothing meaningful
+  const escaped = raw.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
+  try {
+    return new RegExp('^' + escaped + (anchored ? '$' : '')).test(path);
+  } catch {
+    return false;
+  }
 }
 
 function dedupe(items: string[]): string[] {

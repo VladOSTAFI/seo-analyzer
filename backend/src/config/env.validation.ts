@@ -151,8 +151,11 @@ export const envSchema = z.object({
   // --- Phase 2: robots.txt audit (feature 02). Best-effort discovery sub-step. ---
   ROBOTS_AUDIT_ENABLED: boolWithDefault(true),
   ROBOTS_FETCH_TIMEOUT_MS: intWithDefault(10000),
-  // Comma-separated extra "important" path prefixes whose disallow escalates to high.
-  ROBOTS_IMPORTANT_PATHS: strWithDefault('/'),
+  // Comma-separated extra "important" path prefixes whose disallow escalates to
+  // high. Empty by default: severity is driven by disallows that actually hit
+  // crawled content pages. (A bare '/' would mark the whole site important and
+  // flag every normal hygiene disallow — it is ignored.)
+  ROBOTS_IMPORTANT_PATHS: strWithDefault(''),
 
   // --- Phase 2: XML sitemap validation (feature 03). Best-effort discovery sub-step. ---
   SITEMAP_AUDIT_ENABLED: boolWithDefault(true),
