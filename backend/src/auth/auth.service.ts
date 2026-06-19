@@ -205,9 +205,9 @@ export class AuthService {
 
     // Best-effort lazy cleanup of clearly-expired rows; off the critical path of
     // the rotation above and never fatal (a sweep failure must not fail refresh).
-    void Promise.resolve(this.db.delete(refreshTokens).where(lt(refreshTokens.expiresAt, now))).catch(
-      () => {},
-    );
+    void Promise.resolve(
+      this.db.delete(refreshTokens).where(lt(refreshTokens.expiresAt, now)),
+    ).catch(() => {});
 
     return this.issueTokens(user);
   }

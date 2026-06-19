@@ -43,6 +43,10 @@ function detail(overrides: Partial<AuditDetailDto> = {}): AuditDetailDto {
     updatedAt: '2026-06-02T00:00:00.000Z',
     findingsTotal: 0,
     bySeverity: { critical: 0, high: 0, medium: 0, low: 0, info: 0 },
+    // Items 14 / 12 / 13 — sensible nulls / zero until the pipeline writes them.
+    progress: null,
+    coverage: null,
+    distinctIssues: 0,
     ...overrides,
   };
 }

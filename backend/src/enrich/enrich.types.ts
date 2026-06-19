@@ -37,4 +37,22 @@ export interface EnrichSummary {
   falsePositivesCleared: number;
   /** Distinct targets left untouched because the re-check failed (net error/timeout). */
   verifyInconclusive: number;
+
+  // --- External link probe pass (item 9, gated by EXTERNAL_VERIFY_ENABLED).
+  /** Distinct external hrefs probed (0 when EXTERNAL_VERIFY_ENABLED=false). */
+  externalsVerified: number;
+  /**
+   * True when the external probe set was capped by EXTERNAL_VERIFY_MAX or
+   * EXTERNAL_VERIFY_PER_HOST before all candidates were exhausted.
+   */
+  externalsTruncated: boolean;
+
+  // --- Image probe pass (item 9, gated by IMAGE_VERIFY_ENABLED).
+  /** Distinct image src URLs probed (0 when IMAGE_VERIFY_ENABLED=false). */
+  imagesVerified: number;
+  /**
+   * True when the image probe set was capped by EXTERNAL_VERIFY_MAX or
+   * EXTERNAL_VERIFY_PER_HOST before all candidates were exhausted.
+   */
+  imagesTruncated: boolean;
 }

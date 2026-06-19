@@ -4,7 +4,7 @@ import type { Rule } from '../../rule.types';
 /**
  * `meta.h1.missing` — No `<h1>`.
  *
- * Severity: high. Scoped to successfully-fetched (2xx) HTML pages only.
+ * Severity: high. Scoped to successfully-fetched (2xx) HTML pages only (page_kind gated).
  *
  * SQL mechanism: `jsonb_array_length(h1) = 0`.
  */
@@ -18,6 +18,7 @@ export const metaH1MissingRule: Rule = {
       from pages
       where audit_id = ${auditId}
         and status_class = '2xx'
+        and page_kind = 'html'
         and jsonb_array_length(h1) = 0
       order by url
     `);

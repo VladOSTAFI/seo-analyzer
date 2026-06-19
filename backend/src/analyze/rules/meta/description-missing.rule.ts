@@ -4,7 +4,7 @@ import type { Rule } from '../../rule.types';
 /**
  * `meta.description.missing` — No meta description.
  *
- * Severity: medium. Scoped to successfully-fetched (2xx) HTML pages only.
+ * Severity: medium. Scoped to successfully-fetched (2xx) HTML pages only (page_kind gated).
  *
  * SQL mechanism: `jsonb_array_length(meta_description) = 0`.
  */
@@ -18,6 +18,7 @@ export const metaDescriptionMissingRule: Rule = {
       from pages
       where audit_id = ${auditId}
         and status_class = '2xx'
+        and page_kind = 'html'
         and jsonb_array_length(meta_description) = 0
       order by url
     `);

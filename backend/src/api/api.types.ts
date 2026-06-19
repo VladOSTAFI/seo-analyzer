@@ -1,5 +1,6 @@
-import type { Severity } from '../analyze/rule.types';
+import type { Confidence, Severity } from '../analyze/rule.types';
 import type { AuditStatus } from '../audit/audit.repository';
+import type { CoverageManifest } from '../report/report.types';
 
 /**
  * Phase 7 REST contract — the FROZEN seam between the read layer
@@ -13,6 +14,8 @@ import type { AuditStatus } from '../audit/audit.repository';
 
 /** Re-exported so the API layer references one severity vocabulary. */
 export type { Severity } from '../analyze/rule.types';
+/** Re-exported so the API layer references one confidence vocabulary. */
+export type { Confidence } from '../analyze/rule.types';
 /** Re-exported so the API layer references one audit-status vocabulary. */
 export type { AuditStatus } from '../audit/audit.repository';
 
@@ -33,17 +36,42 @@ export interface AuditDto {
   updatedAt: string;
 }
 
-/** `GET /audits/:id` — an audit plus its finding rollups. */
+/**
+ * `GET /audits/:id` — an audit plus its finding rollups.
+ *
+ * `progress` (Item 14) surfaces the live pipeline stage so polling clients can
+ * display "Fetching PSI data…" rather than a generic spinner while status stays
+ * at `analyzing`.
+ *
+ * `coverage` (Item 12) surfaces what was assessed vs. skipped.
+ *
+ * `distinctIssues` (Item 13) is the de-duplicated issue headline count that
+ * collapses H1 sub-rules and site-wide perf rollups into unique (ruleFamily,
+ * url) pairs so the headline reads "6 issues across 305 findings".
+ */
 export interface AuditDetailDto extends AuditDto {
   findingsTotal: number;
   bySeverity: SeverityCounts;
+  /** Live pipeline stage progress, null until the first stage starts. */
+  progress: { stage: string; startedAt: string } | null;
+  /** Coverage manifest, null until the pipeline completes. */
+  coverage: CoverageManifest | null;
+  /** De-duplicated issue count (unique ruleFamily × url pairs). */
+  distinctIssues: number;
 }
 
-/** One finding as returned by `GET /audits/:id/findings`. */
+/**
+ * One finding as returned by `GET /audits/:id/findings`.
+ *
+ * `confidence` reflects how directly the signal was measured: `high` = directly
+ * observed; `medium`/`low` = estimated or unverified (origin-level CrUX,
+ * un-probed external links). Defaults to `'high'` for pre-migration rows.
+ */
 export interface FindingDto {
   id: string;
   ruleId: string;
   severity: Severity;
+  confidence: Confidence;
   url: string | null;
   detail: Record<string, unknown>;
   createdAt: string;

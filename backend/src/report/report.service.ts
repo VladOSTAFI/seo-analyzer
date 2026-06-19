@@ -8,7 +8,14 @@ import { AuditRepository } from '../audit/audit.repository';
 import { ENV } from '../config/config.module';
 import type { Env } from '../config/env.validation';
 import { audits } from '../db/schema';
-import type { Cell, ColumnSpec, ReportContext, ReportSummary, SheetRow } from './report.types';
+import type {
+  Cell,
+  ColumnSpec,
+  CoverageManifest,
+  ReportContext,
+  ReportSummary,
+  SheetRow,
+} from './report.types';
 import { REPORT_SECTIONS, coveredRuleIds } from './report.sections';
 import { loadReportData } from './report.data';
 import { DETAILS_COLUMN, formatDataSheet, toExcelColumns } from './report.format';
@@ -20,7 +27,17 @@ import {
   buildOtherRows,
   buildSummaryRows,
   countBySeverity,
+  distinctIssueCount,
 } from './report.summary';
+
+/** Sheet name for the Coverage manifest tab (≤31 chars). */
+const COVERAGE_SHEET_NAME = 'Coverage';
+
+/** Column spec for the Coverage sheet (key-value pairs). */
+const COVERAGE_COLUMNS: ColumnSpec[] = [
+  { header: 'Metric', key: 'metric', width: 32 },
+  { header: 'Value', key: 'value', width: 70 },
+];
 
 /**
  * Phase 5 report engine (§"Phase 5 — Report Generation"). Reads ONLY from
@@ -106,6 +123,15 @@ export class ReportService {
         this.renderSheet(wb, OTHER_SHEET_NAME, OTHER_COLUMNS, otherRows);
       }
 
+      // ── Coverage sheet (Item 12) ─────────────────────────────────────────────
+      // Read the persisted coverage manifest (written by audit.service.ts at end of
+      // runAll). Render it as a key-value sheet if present; omit the tab otherwise.
+      const coverageManifest = audit.coverage as CoverageManifest | null;
+      if (coverageManifest) {
+        const coverageRows = this.buildCoverageRows(coverageManifest);
+        this.renderSheet(wb, COVERAGE_SHEET_NAME, COVERAGE_COLUMNS, coverageRows);
+      }
+
       // ── Write to disk ───────────────────────────────────────────────────────
       const reportPath = await this.writeWorkbook(wb, auditId, generatedAt);
 
@@ -117,16 +143,19 @@ export class ReportService {
         .where(eq(audits.id, auditId));
 
       const bySeverity = countBySeverity(findings);
+      const distinctIssues = distinctIssueCount(findings);
       const summary: ReportSummary = {
         reportPath,
         sheets: wb.worksheets.length,
         totalFindings: findings.length,
         bySeverity,
+        distinctIssues,
       };
 
       const elapsedMs = Date.now() - startedAt;
       this.logger.log(
         `Report done audit=${auditId} sheets=${summary.sheets} findings=${summary.totalFindings} ` +
+          `distinct=${summary.distinctIssues} ` +
           `(critical=${bySeverity.critical}, high=${bySeverity.high}, medium=${bySeverity.medium}, ` +
           `low=${bySeverity.low}, info=${bySeverity.info}) path=${reportPath} durationMs=${elapsedMs}`,
       );
@@ -138,6 +167,33 @@ export class ReportService {
       this.logger.error(`Report failed audit=${auditId} stage=report: ${reason}`);
       throw err;
     }
+  }
+
+  // ── Coverage sheet builder (Item 12) ────────────────────────────────────────
+
+  /** Flatten a {@link CoverageManifest} into key-value rows for the Coverage tab. */
+  private buildCoverageRows(m: CoverageManifest): SheetRow[] {
+    const rows: SheetRow[] = [
+      { metric: 'Pages crawled', value: m.pagesCrawled },
+      { metric: 'Crawl cap', value: m.crawlCap },
+      { metric: 'Cap hit?', value: String(m.capHit) },
+      { metric: '', value: '' },
+      { metric: 'External links (total)', value: m.externalLinks.total },
+      { metric: 'External links (verified)', value: m.externalLinks.verified },
+      { metric: '', value: '' },
+      { metric: 'Images (total)', value: m.images.total },
+      { metric: 'Images (status enriched)', value: m.images.statusEnriched },
+      { metric: '', value: '' },
+      { metric: 'CWV source: field data', value: m.cwvSource.field },
+      { metric: 'CWV source: origin fallback', value: m.cwvSource.originFallback },
+      { metric: 'CWV source: lab only', value: m.cwvSource.lab },
+      { metric: '', value: '' },
+      {
+        metric: 'Rules with zero findings',
+        value: m.rulesInert.length > 0 ? m.rulesInert.join(', ') : '(none)',
+      },
+    ];
+    return rows;
   }
 
   /**

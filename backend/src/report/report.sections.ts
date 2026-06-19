@@ -1,4 +1,5 @@
-import type { Cell, ReportSection, SheetRow } from './report.types';
+import type { Confidence } from '../analyze/rule.types';
+import type { Cell, FindingRow, ReportSection, SheetRow } from './report.types';
 
 /**
  * The COMPLETE Phase 5 report section registry — one entry per worksheet.
@@ -19,14 +20,20 @@ import type { Cell, ReportSection, SheetRow } from './report.types';
  * the engine-generated Summary sheet, and the catch-all "Other" sheet.
  *
  * Column conventions: every sheet carries a `url` column; every issue sheet
- * also carries `severity` (so the engine can color-code). Builders MAY emit
- * extra keys not declared here — the engine overflows them into a `details`
- * column (no data loss), so columns list the PRIMARY fields only.
+ * also carries `severity` (so the engine can color-code) immediately followed
+ * by `confidence` (so the reader can see how trustworthy each row is).
+ * Builders MAY emit extra keys not declared here — the engine overflows them
+ * into a `details` column (no data loss), so columns list the PRIMARY fields
+ * only.
  *
- * ── coverage check (31 ruleIds, each claimed exactly once) ──────────────────
+ * Conditional sections:
+ *   - `links.external-flag` / "External Links" sheet — only included when
+ *     `RULE_EXTERNAL_FLAG_ENABLED` is truthy (mirrors rule.registry.ts exactly).
+ *
+ * ── coverage check (30 ruleIds when external-flag is OFF, 31 when ON) ────────
  *   Redirects        : links.internal-redirect, links.redirect-chain
  *   Broken Links     : links.broken-internal, links.broken-external
- *   External Links   : links.external-flag
+ *   External Links   : links.external-flag (conditional)
  *   Titles           : meta.title.missing, meta.title.duplicate, meta.title.multiple
  *   Descriptions     : meta.description.missing, meta.description.duplicate, meta.description.multiple
  *   H1               : meta.h1.missing, meta.h1.duplicate, meta.h1.multiple
@@ -37,10 +44,18 @@ import type { Cell, ReportSection, SheetRow } from './report.types';
  *   Hreflang         : i18n.hreflang
  *   Images           : image.alt-title, image.broken
  *   Mirrors          : mirror.main-mirror, mirror.trailing-slash
- *   Performance      : perf.lcp, perf.cls-inp, perf.psi-usability, perf.mobile-indexing
+ *   Performance      : perf.lcp, perf.cls-inp, perf.psi-usability, perf.lab-score
  *   Meta Templates   : meta.title.template, meta.description.template, meta.h1.template
  * ────────────────────────────────────────────────────────────────────────────
  */
+
+// Mirrors rule.registry.ts: external-flag is opt-in (very noisy at low severity).
+const _externalFlagRaw = (process.env.RULE_EXTERNAL_FLAG_ENABLED ?? '').toLowerCase().trim();
+const externalFlagEnabled =
+  _externalFlagRaw === 'true' ||
+  _externalFlagRaw === '1' ||
+  _externalFlagRaw === 'yes' ||
+  _externalFlagRaw === 'on';
 
 // ── pure helpers (no IO; Wave-2B owns these) ───────────────────────────────
 
@@ -101,8 +116,185 @@ function ruleTail(ruleId: string): string {
   return parts[parts.length - 1] ?? ruleId;
 }
 
+// ── confidence helpers ─────────────────────────────────────────────────────
+
+/**
+ * Confidence rank: lower number = lower confidence (less trustworthy).
+ * Used to pick the WEAKEST (minimum) confidence across a group of findings.
+ * A group is only as trustworthy as its weakest member.
+ */
+const CONFIDENCE_RANK: Record<Confidence, number> = {
+  high: 2,
+  medium: 1,
+  low: 0,
+};
+
+/**
+ * Return the minimum (least trustworthy) confidence in a group of findings.
+ * Falls back to `'high'` for an empty group (defensive; callers always pass
+ * non-empty groups).
+ */
+function minConfidence(findings: FindingRow[]): Confidence {
+  let min: Confidence = 'high';
+  for (const f of findings) {
+    if (CONFIDENCE_RANK[f.confidence] < CONFIDENCE_RANK[min]) {
+      min = f.confidence;
+    }
+  }
+  return min;
+}
+
+// ── H1 family rollup helper (Item 3) ──────────────────────────────────────
+
+/**
+ * Rule family = first two dotted segments (e.g. 'meta.h1', 'perf.psi').
+ * Used for both the H1 report-layer rollup (Item 3) and the distinctIssues
+ * tally in report.summary.ts (Item 13).
+ */
+export function ruleFamily(ruleId: string): string {
+  const parts = ruleId.split('.');
+  return parts.slice(0, 2).join('.');
+}
+
+/**
+ * Build consolidated H1 rows (Item 3): when multiple meta.h1.* rules fire on
+ * the SAME url, fold them into ONE "H1 structure" row per url. Each url gets at
+ * most one output row. The `issue` cell is the original ruleTail for
+ * single-firing urls, or `'structure'` for multi-firing ones; the `notes` cell
+ * collects the sub-reasons.
+ *
+ * Single-rule urls (the common case) produce exactly 1:1 rows. Two or more H1
+ * rules on the same url produce 1 consolidated row — this is purely a
+ * display-layer grouping; the raw findings table is UNCHANGED.
+ *
+ * For grouped rows `confidence` is the MINIMUM confidence across all findings
+ * in the group: a group is only as trustworthy as its weakest member.
+ */
+function buildH1Rows(findings: Parameters<ReportSection['buildRows']>[0]): SheetRow[] {
+  const rows: SheetRow[] = [];
+  // Group by url — null-url findings use the SITE_WIDE placeholder as the key.
+  const byUrl = new Map<string, typeof findings>();
+  for (const f of findings) {
+    const key = f.url ?? SITE_WIDE;
+    const bucket = byUrl.get(key);
+    if (bucket) {
+      bucket.push(f);
+    } else {
+      byUrl.set(key, [f]);
+    }
+  }
+
+  for (const [urlKey, group] of byUrl) {
+    // Single finding for this url → straightforward 1:1 projection.
+    if (group.length === 1) {
+      const f = group[0]!;
+      const issue = ruleTail(f.ruleId);
+      const h1 = issue === 'multiple' ? joined(f.detail, 'h1s') : str(f.detail, 'h1');
+      const count =
+        issue === 'duplicate' ? num(f.detail, 'duplicateCount') : num(f.detail, 'count');
+      rows.push({
+        severity: f.severity,
+        confidence: f.confidence,
+        url: urlKey,
+        issue,
+        h1,
+        count,
+        recommendation:
+          issue === 'missing'
+            ? 'Add a single <h1>'
+            : issue === 'duplicate'
+              ? 'Make the H1 unique per page'
+              : issue === 'template'
+                ? 'Adjust H1 length'
+                : 'Keep a single <h1>',
+      });
+      continue;
+    }
+
+    // Multiple H1 rules fired on the same url → consolidated "structure" row.
+    // Dominant severity = highest-ranked among the group.
+    const SEVERITY_RANK: Record<string, number> = {
+      critical: 0,
+      high: 1,
+      medium: 2,
+      low: 3,
+      info: 4,
+    };
+    const dominantSeverity = group.reduce((best, f) => {
+      const rank = SEVERITY_RANK[f.severity] ?? 5;
+      return rank < (SEVERITY_RANK[best] ?? 5) ? f.severity : best;
+    }, group[0]!.severity);
+
+    // Minimum confidence: the group is only as trustworthy as its weakest member.
+    const groupConfidence = minConfidence(group);
+
+    // Collect sub-reasons (one per finding).
+    const subReasons = group.map((f) => {
+      const tail = ruleTail(f.ruleId);
+      if (tail === 'multiple') {
+        const count = num(f.detail, 'count');
+        return count !== null ? `multiple (${count})` : 'multiple';
+      }
+      if (tail === 'duplicate') {
+        const n = num(f.detail, 'duplicateCount');
+        return n !== null ? `duplicate (${n} pages)` : 'duplicate';
+      }
+      return tail; // 'missing', 'template', etc.
+    });
+
+    // Best h1 value from the group (first non-null wins).
+    let h1: Cell = null;
+    for (const f of group) {
+      const tail = ruleTail(f.ruleId);
+      const candidate = tail === 'multiple' ? joined(f.detail, 'h1s') : str(f.detail, 'h1');
+      if (candidate !== null) {
+        h1 = candidate;
+        break;
+      }
+    }
+
+    rows.push({
+      severity: dominantSeverity,
+      confidence: groupConfidence,
+      url: urlKey,
+      issue: 'structure',
+      h1,
+      count: null,
+      notes: subReasons.join('; '),
+      recommendation: 'Fix H1 structure: ensure exactly one unique H1 per page',
+    });
+  }
+
+  return rows;
+}
+
+// ── The EXTERNAL_LINKS section (conditional — matches RULE_EXTERNAL_FLAG_ENABLED) ──
+
+const EXTERNAL_LINKS_SECTION: ReportSection = {
+  spec: {
+    name: 'External Links',
+    description: 'External links missing a nofollow/sponsored/ugc rel token.',
+    columns: [
+      { header: 'Severity', key: 'severity', width: 10 },
+      { header: 'Confidence', key: 'confidence', width: 12 },
+      { header: 'Page (source)', key: 'url', width: 60 },
+      { header: 'Link href', key: 'href', width: 60 },
+      { header: 'rel', key: 'rel', width: 30 },
+    ],
+  },
+  ruleIds: ['links.external-flag'],
+  buildRows: (findings): SheetRow[] =>
+    findings.map((f) => ({
+      severity: f.severity,
+      confidence: f.confidence,
+      url: f.url ?? SITE_WIDE,
+      href: str(f.detail, 'href'),
+      rel: joined(f.detail, 'rel'),
+    })),
+};
+
 export const REPORT_SECTIONS: ReportSection[] = [
-  // ── links.* (redirects + broken + external) ────────────────────────────────
+  // ── links.* (redirects + broken + conditional external) ───────────────────
   {
     spec: {
       name: 'Redirects',
@@ -110,6 +302,7 @@ export const REPORT_SECTIONS: ReportSection[] = [
         'Internal links pointing to 3xx, and pages resolving through >1 redirect hop / loops.',
       columns: [
         { header: 'Severity', key: 'severity', width: 10 },
+        { header: 'Confidence', key: 'confidence', width: 12 },
         { header: 'Page (source)', key: 'url', width: 60 },
         { header: 'Link href', key: 'href', width: 60 },
         { header: 'Target status', key: 'targetStatusCode', width: 14 },
@@ -124,6 +317,7 @@ export const REPORT_SECTIONS: ReportSection[] = [
         const isChain = f.ruleId === 'links.redirect-chain';
         return {
           severity: f.severity,
+          confidence: f.confidence,
           url: f.url ?? SITE_WIDE,
           href: str(f.detail, 'href'),
           targetStatusCode: num(f.detail, 'targetStatusCode'),
@@ -141,6 +335,7 @@ export const REPORT_SECTIONS: ReportSection[] = [
       description: 'Internal/external links whose crawled target returned 4xx/5xx.',
       columns: [
         { header: 'Severity', key: 'severity', width: 10 },
+        { header: 'Confidence', key: 'confidence', width: 12 },
         { header: 'Page (source)', key: 'url', width: 60 },
         { header: 'Link href', key: 'href', width: 60 },
         { header: 'Target status', key: 'targetStatusCode', width: 14 },
@@ -151,6 +346,7 @@ export const REPORT_SECTIONS: ReportSection[] = [
     buildRows: (findings): SheetRow[] =>
       findings.map((f) => ({
         severity: f.severity,
+        confidence: f.confidence,
         url: f.url ?? SITE_WIDE,
         href: str(f.detail, 'href'),
         targetStatusCode: num(f.detail, 'targetStatusCode'),
@@ -159,26 +355,8 @@ export const REPORT_SECTIONS: ReportSection[] = [
         recommendation: 'Remove or fix link',
       })),
   },
-  {
-    spec: {
-      name: 'External Links',
-      description: 'External links missing a nofollow/sponsored/ugc rel token.',
-      columns: [
-        { header: 'Severity', key: 'severity', width: 10 },
-        { header: 'Page (source)', key: 'url', width: 60 },
-        { header: 'Link href', key: 'href', width: 60 },
-        { header: 'rel', key: 'rel', width: 30 },
-      ],
-    },
-    ruleIds: ['links.external-flag'],
-    buildRows: (findings): SheetRow[] =>
-      findings.map((f) => ({
-        severity: f.severity,
-        url: f.url ?? SITE_WIDE,
-        href: str(f.detail, 'href'),
-        rel: joined(f.detail, 'rel'),
-      })),
-  },
+  // Conditional: only when RULE_EXTERNAL_FLAG_ENABLED is truthy (mirrors rule.registry.ts).
+  ...(externalFlagEnabled ? [EXTERNAL_LINKS_SECTION] : []),
 
   // ── meta.* (titles / descriptions / h1) ────────────────────────────────────
   {
@@ -187,6 +365,7 @@ export const REPORT_SECTIONS: ReportSection[] = [
       description: 'Missing, duplicate, or multiple <title> elements.',
       columns: [
         { header: 'Severity', key: 'severity', width: 10 },
+        { header: 'Confidence', key: 'confidence', width: 12 },
         { header: 'Page', key: 'url', width: 60 },
         { header: 'Issue', key: 'issue', width: 14 },
         { header: 'Title', key: 'title', width: 60 },
@@ -203,6 +382,7 @@ export const REPORT_SECTIONS: ReportSection[] = [
           issue === 'duplicate' ? num(f.detail, 'duplicateCount') : num(f.detail, 'count');
         return {
           severity: f.severity,
+          confidence: f.confidence,
           url: f.url ?? SITE_WIDE,
           issue,
           title,
@@ -222,6 +402,7 @@ export const REPORT_SECTIONS: ReportSection[] = [
       description: 'Missing, duplicate, or multiple meta descriptions.',
       columns: [
         { header: 'Severity', key: 'severity', width: 10 },
+        { header: 'Confidence', key: 'confidence', width: 12 },
         { header: 'Page', key: 'url', width: 60 },
         { header: 'Issue', key: 'issue', width: 14 },
         { header: 'Description', key: 'description', width: 70 },
@@ -242,6 +423,7 @@ export const REPORT_SECTIONS: ReportSection[] = [
           issue === 'duplicate' ? num(f.detail, 'duplicateCount') : num(f.detail, 'count');
         return {
           severity: f.severity,
+          confidence: f.confidence,
           url: f.url ?? SITE_WIDE,
           issue,
           description,
@@ -258,37 +440,21 @@ export const REPORT_SECTIONS: ReportSection[] = [
   {
     spec: {
       name: 'H1',
-      description: 'Missing, duplicate, or multiple <h1> elements.',
+      description: 'Missing, duplicate, or multiple <h1> elements — consolidated per page.',
       columns: [
         { header: 'Severity', key: 'severity', width: 10 },
+        { header: 'Confidence', key: 'confidence', width: 12 },
         { header: 'Page', key: 'url', width: 60 },
         { header: 'Issue', key: 'issue', width: 14 },
         { header: 'H1', key: 'h1', width: 60 },
         { header: 'Count', key: 'count', width: 10 },
+        { header: 'Notes', key: 'notes', width: 50 },
       ],
     },
     ruleIds: ['meta.h1.missing', 'meta.h1.duplicate', 'meta.h1.multiple'],
-    buildRows: (findings): SheetRow[] =>
-      findings.map((f) => {
-        const issue = ruleTail(f.ruleId);
-        // duplicate emits { h1, duplicateCount }; multiple emits { h1s[], count }.
-        const h1 = issue === 'multiple' ? joined(f.detail, 'h1s') : str(f.detail, 'h1');
-        const count =
-          issue === 'duplicate' ? num(f.detail, 'duplicateCount') : num(f.detail, 'count');
-        return {
-          severity: f.severity,
-          url: f.url ?? SITE_WIDE,
-          issue,
-          h1,
-          count,
-          recommendation:
-            issue === 'missing'
-              ? 'Add a single <h1>'
-              : issue === 'duplicate'
-                ? 'Make the H1 unique per page'
-                : 'Keep a single <h1>',
-        };
-      }),
+    // Item 3: H1 rules that fire on the SAME url are consolidated into one row.
+    // Different urls each get their own row (still one row per distinct url).
+    buildRows: buildH1Rows,
   },
 
   // ── dupe.* ─────────────────────────────────────────────────────────────────
@@ -298,6 +464,7 @@ export const REPORT_SECTIONS: ReportSection[] = [
       description: 'Pages sharing an identical content hash (duplicate bodies).',
       columns: [
         { header: 'Severity', key: 'severity', width: 10 },
+        { header: 'Confidence', key: 'confidence', width: 12 },
         { header: 'Page', key: 'url', width: 60 },
         { header: 'Content hash', key: 'contentHash', width: 40 },
         { header: 'Group size', key: 'duplicateCount', width: 12 },
@@ -307,6 +474,7 @@ export const REPORT_SECTIONS: ReportSection[] = [
     buildRows: (findings): SheetRow[] =>
       findings.map((f) => ({
         severity: f.severity,
+        confidence: f.confidence,
         url: f.url ?? SITE_WIDE,
         contentHash: str(f.detail, 'contentHash'),
         duplicateCount: num(f.detail, 'duplicateCount'),
@@ -321,6 +489,7 @@ export const REPORT_SECTIONS: ReportSection[] = [
       description: 'Canonical missing/non-self, and live pages blocked from indexing.',
       columns: [
         { header: 'Severity', key: 'severity', width: 10 },
+        { header: 'Confidence', key: 'confidence', width: 12 },
         { header: 'Page', key: 'url', width: 60 },
         { header: 'Issue', key: 'issue', width: 18 },
         { header: 'Canonical URL', key: 'canonicalUrl', width: 60 },
@@ -335,6 +504,7 @@ export const REPORT_SECTIONS: ReportSection[] = [
         const issue = isRobots ? 'noindex/blocked' : str(f.detail, 'issue');
         return {
           severity: f.severity,
+          confidence: f.confidence,
           url: f.url ?? SITE_WIDE,
           issue,
           canonicalUrl: str(f.detail, 'canonicalUrl'),
@@ -351,6 +521,7 @@ export const REPORT_SECTIONS: ReportSection[] = [
       description: 'Non-SEO-friendly URLs (ЧПУ): uppercase, underscores, query params, length.',
       columns: [
         { header: 'Severity', key: 'severity', width: 10 },
+        { header: 'Confidence', key: 'confidence', width: 12 },
         { header: 'Page', key: 'url', width: 70 },
         { header: 'Issues', key: 'issues', width: 50 },
       ],
@@ -359,6 +530,7 @@ export const REPORT_SECTIONS: ReportSection[] = [
     buildRows: (findings): SheetRow[] =>
       findings.map((f) => ({
         severity: f.severity,
+        confidence: f.confidence,
         url: f.url ?? SITE_WIDE,
         issues: joined(f.detail, 'issues'),
         recommendation: 'Use lowercase, hyphenated, short, param-free URLs',
@@ -372,6 +544,7 @@ export const REPORT_SECTIONS: ReportSection[] = [
       description: 'Broken/non-reciprocal rel=next on paginated series.',
       columns: [
         { header: 'Severity', key: 'severity', width: 10 },
+        { header: 'Confidence', key: 'confidence', width: 12 },
         { header: 'Page', key: 'url', width: 60 },
         { header: 'rel=next', key: 'relNext', width: 60 },
         { header: 'Issue', key: 'issue', width: 24 },
@@ -381,6 +554,7 @@ export const REPORT_SECTIONS: ReportSection[] = [
     buildRows: (findings): SheetRow[] =>
       findings.map((f) => ({
         severity: f.severity,
+        confidence: f.confidence,
         url: f.url ?? SITE_WIDE,
         relNext: str(f.detail, 'relNext'),
         issue: str(f.detail, 'issue'),
@@ -395,6 +569,7 @@ export const REPORT_SECTIONS: ReportSection[] = [
       description: 'hreflang non-reciprocal / invalid lang codes.',
       columns: [
         { header: 'Severity', key: 'severity', width: 10 },
+        { header: 'Confidence', key: 'confidence', width: 12 },
         { header: 'Page', key: 'url', width: 60 },
         { header: 'Lang', key: 'lang', width: 14 },
         { header: 'href', key: 'href', width: 60 },
@@ -405,6 +580,7 @@ export const REPORT_SECTIONS: ReportSection[] = [
     buildRows: (findings): SheetRow[] =>
       findings.map((f) => ({
         severity: f.severity,
+        confidence: f.confidence,
         url: f.url ?? SITE_WIDE,
         lang: str(f.detail, 'lang'),
         href: str(f.detail, 'href'),
@@ -421,6 +597,7 @@ export const REPORT_SECTIONS: ReportSection[] = [
       description: 'Images missing alt text, and images returning 4xx/5xx.',
       columns: [
         { header: 'Severity', key: 'severity', width: 10 },
+        { header: 'Confidence', key: 'confidence', width: 12 },
         { header: 'Page', key: 'url', width: 60 },
         { header: 'Image src', key: 'src', width: 60 },
         { header: 'Issue', key: 'issue', width: 16 },
@@ -437,6 +614,7 @@ export const REPORT_SECTIONS: ReportSection[] = [
           : str(f.detail, 'altState');
         return {
           severity: f.severity,
+          confidence: f.confidence,
           url: f.url ?? SITE_WIDE,
           src: str(f.detail, 'src'),
           issue,
@@ -454,6 +632,7 @@ export const REPORT_SECTIONS: ReportSection[] = [
         'Site reachable on multiple host/scheme variants, and trailing-slash duplication.',
       columns: [
         { header: 'Severity', key: 'severity', width: 10 },
+        { header: 'Confidence', key: 'confidence', width: 12 },
         { header: 'Page', key: 'url', width: 60 },
         { header: 'Issue', key: 'issue', width: 18 },
         { header: 'Variant / duplicate-of', key: 'variant', width: 60 },
@@ -468,6 +647,7 @@ export const REPORT_SECTIONS: ReportSection[] = [
         const variant = isMainMirror ? joined(f.detail, 'variants') : str(f.detail, 'slashUrl');
         return {
           severity: f.severity,
+          confidence: f.confidence,
           url: f.url ?? SITE_WIDE,
           issue: isMainMirror ? 'main-mirror' : 'trailing-slash',
           variant,
@@ -483,33 +663,41 @@ export const REPORT_SECTIONS: ReportSection[] = [
   {
     spec: {
       name: 'Performance',
-      description: 'Core Web Vitals (LCP/CLS/INP) and PSI usability / mobile-indexing flags.',
+      description: 'Core Web Vitals (LCP/CLS/INP), PSI usability flags, and Lighthouse lab score.',
       columns: [
         { header: 'Severity', key: 'severity', width: 10 },
+        { header: 'Confidence', key: 'confidence', width: 12 },
         { header: 'Page', key: 'url', width: 60 },
         { header: 'Strategy', key: 'strategy', width: 10 },
         { header: 'LCP (ms)', key: 'lcpMs', width: 12 },
         { header: 'CLS', key: 'cls', width: 10 },
         { header: 'INP (ms)', key: 'inpMs', width: 12 },
+        { header: 'Score', key: 'score', width: 8 },
         { header: 'Flags', key: 'flags', width: 50 },
       ],
     },
-    ruleIds: ['perf.lcp', 'perf.cls-inp', 'perf.psi-usability', 'perf.mobile-indexing'],
+    ruleIds: ['perf.lcp', 'perf.cls-inp', 'perf.psi-usability', 'perf.lab-score'],
     buildRows: (findings): SheetRow[] =>
       findings.map((f) => {
         // lcp: { strategy, lcpMs }; cls-inp: { strategy, cls, inpMs, issues[] };
-        // psi-usability / mobile-indexing: { strategy, flags[] }.
+        // psi-usability: { strategy, flags[] }; lab-score: { strategy, score }.
         // 'flags' column carries usability flags OR the cls-inp tripped-metric list.
         const flagsSource = f.detail.flags !== undefined ? 'flags' : 'issues';
+        const isLabScore = f.ruleId === 'perf.lab-score';
         return {
           severity: f.severity,
+          confidence: f.confidence,
           url: f.url ?? SITE_WIDE,
           strategy: str(f.detail, 'strategy'),
           lcpMs: num(f.detail, 'lcpMs'),
           cls: num(f.detail, 'cls'),
           inpMs: num(f.detail, 'inpMs'),
+          score: num(f.detail, 'score'),
           flags: joined(f.detail, flagsSource),
           metric: ruleTail(f.ruleId),
+          recommendation: isLabScore
+            ? 'Improve Lighthouse performance score: reduce render-blocking resources, optimize images and JavaScript'
+            : null,
         };
       }),
   },
@@ -521,6 +709,7 @@ export const REPORT_SECTIONS: ReportSection[] = [
       description: 'Recommended title/description/H1 length templates (info).',
       columns: [
         { header: 'Severity', key: 'severity', width: 10 },
+        { header: 'Confidence', key: 'confidence', width: 12 },
         { header: 'Page', key: 'url', width: 60 },
         { header: 'Element', key: 'element', width: 14 },
         { header: 'Current value', key: 'value', width: 60 },
@@ -536,6 +725,7 @@ export const REPORT_SECTIONS: ReportSection[] = [
         const element = f.ruleId.split('.')[1] ?? ''; // 'title' | 'description' | 'h1'
         return {
           severity: f.severity,
+          confidence: f.confidence,
           url: f.url ?? SITE_WIDE,
           element,
           value: str(f.detail, element),

@@ -1,0 +1,76 @@
+{
+  "loadingExperience": {
+    "id": "https://example.com/",
+    "origin_fallback": true,
+    "metrics": {
+      "LARGEST_CONTENTFUL_PAINT_MS": {
+        "percentile": 4100,
+        "category": "SLOW"
+      },
+      "CUMULATIVE_LAYOUT_SHIFT_SCORE": {
+        "percentile": 15,
+        "category": "AVERAGE"
+      },
+      "INTERACTION_TO_NEXT_PAINT": {
+        "percentile": 320,
+        "category": "SLOW"
+      }
+    },
+    "overall_category": "SLOW"
+  },
+  "lighthouseResult": {
+    "requestedUrl": "https://example.com/some-page",
+    "finalUrl": "https://example.com/some-page",
+    "categories": {
+      "performance": {
+        "id": "performance",
+        "score": 0.61,
+        "auditRefs": [
+          { "id": "first-contentful-paint", "group": "metrics" },
+          { "id": "largest-contentful-paint", "group": "metrics" },
+          { "id": "total-blocking-time", "group": "metrics" },
+          { "id": "speed-index", "group": "metrics" },
+          { "id": "cumulative-layout-shift", "group": "metrics" }
+        ]
+      },
+      "seo": {
+        "id": "seo",
+        "score": 1,
+        "auditRefs": [
+          { "id": "viewport", "group": "seo-mobile" }
+        ]
+      }
+    },
+    "audits": {
+      "first-contentful-paint": {
+        "id": "first-contentful-paint",
+        "score": 0.7,
+        "numericValue": 1800.0
+      },
+      "largest-contentful-paint": {
+        "id": "largest-contentful-paint",
+        "score": 0.4,
+        "numericValue": 3900.0
+      },
+      "total-blocking-time": {
+        "id": "total-blocking-time",
+        "score": 0.6,
+        "numericValue": 400.0
+      },
+      "speed-index": {
+        "id": "speed-index",
+        "score": 0.65,
+        "numericValue": 3200.0
+      },
+      "cumulative-layout-shift": {
+        "id": "cumulative-layout-shift",
+        "score": 0.8,
+        "numericValue": 0.12
+      },
+      "viewport": {
+        "id": "viewport",
+        "score": 1
+      }
+    }
+  }
+}

@@ -26,10 +26,17 @@ const SEO_PROBLEM_SCORE = 1;
  * The slice of the PSI v5 JSON we read. Everything is optional/loosely typed
  * because PSI shapes vary (field data is absent for low-traffic URLs, audit maps
  * differ per Lighthouse version); every access in the parser is guarded.
+ *
+ * `origin_fallback` is the undocumented but stable boolean PSI sets on
+ * `loadingExperience` when it had no page-level CrUX data and is returning
+ * ORIGIN-level aggregates instead. We capture it so downstream rules can
+ * collapse identical origin-level findings into one site-level finding.
  */
 interface PsiResponse {
   loadingExperience?: {
     metrics?: Record<string, { percentile?: number } | undefined>;
+    /** True when PSI is returning origin-level aggregates, not page-level CrUX. */
+    origin_fallback?: boolean;
   };
   lighthouseResult?: {
     categories?: Record<
@@ -159,10 +166,22 @@ export class PsiService implements PsiClient {
    * score + FCP/TBT/SpeedIndex. Every nested access is guarded so a missing
    * section yields nulls / fewer flags rather than a throw. The full JSON is
    * returned verbatim as `raw`.
+   *
+   * Provenance fields:
+   * - `isOriginFallback`: true when `loadingExperience.origin_fallback === true`,
+   *   meaning PSI returned origin-level CrUX aggregates rather than page-specific
+   *   data. Rules use this to avoid emitting one false per-page finding per sample.
+   * - `cwvSource`: 'field' when any of LCP/CLS/INP came from CrUX field data,
+   *   'lab' when only lab fallbacks (LCP/CLS from Lighthouse) were available,
+   *   'none' when no CWV data at all was present.
    */
   private parse(json: PsiResponse): PsiMetrics {
-    const fieldMetrics = json.loadingExperience?.metrics ?? {};
+    const le = json.loadingExperience;
+    const fieldMetrics = le?.metrics ?? {};
     const audits = json.lighthouseResult?.audits ?? {};
+
+    // Record whether PSI is reporting origin-level aggregates for this page.
+    const isOriginFallback = le?.origin_fallback === true;
 
     // Field (CrUX) percentiles; absent for low-traffic URLs.
     const fieldLcp = fieldMetrics.LARGEST_CONTENTFUL_PAINT_MS?.percentile;
@@ -183,6 +202,16 @@ export class PsiService implements PsiClient {
     // INP: field only; no lab fallback.
     const inpMs = roundMs(fieldInp);
 
+    // Determine CWV provenance.
+    // 'field' if any of the three field CWV metrics is a real number.
+    const hasField =
+      typeof fieldLcp === 'number' ||
+      typeof fieldClsRaw === 'number' ||
+      typeof fieldInp === 'number';
+    // 'lab' if no field data but lab LCP or CLS is available.
+    const hasLab = !hasField && (labLcp != null || labCls != null);
+    const cwvSource: 'field' | 'lab' | 'none' = hasField ? 'field' : hasLab ? 'lab' : 'none';
+
     const performanceScore = this.score(json, 'performance');
 
     const fcpMs = roundMs(audits['first-contentful-paint']?.numericValue);
@@ -200,6 +229,8 @@ export class PsiService implements PsiClient {
       tbtMs,
       speedIndexMs,
       usabilityFlags,
+      cwvSource,
+      isOriginFallback,
       raw: json,
     };
   }

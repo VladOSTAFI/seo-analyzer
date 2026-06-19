@@ -1,4 +1,4 @@
-import type { Severity } from '../analyze/rule.types';
+import type { Confidence, Severity } from '../analyze/rule.types';
 import { RULES } from '../analyze/rule.registry';
 import { REPORT_SECTIONS, coveredRuleIds } from './report.sections';
 import type { FindingRow, ReportContext, ReportSection } from './report.types';
@@ -36,6 +36,18 @@ describe('REPORT_SECTIONS coverage', () => {
     }
   });
 
+  it('every sheet has a confidence column immediately after severity', () => {
+    for (const section of REPORT_SECTIONS) {
+      const keys = section.spec.columns.map((c) => c.key);
+      const severityIdx = keys.indexOf('severity');
+      const confidenceIdx = keys.indexOf('confidence');
+      // Every issue sheet that has severity must have confidence right after it.
+      if (severityIdx !== -1) {
+        expect(confidenceIdx).toBe(severityIdx + 1);
+      }
+    }
+  });
+
   it('the union of section.ruleIds has no duplicates', () => {
     const all = REPORT_SECTIONS.flatMap((s) => s.ruleIds);
     expect(new Set(all).size).toBe(all.length);
@@ -65,11 +77,12 @@ const CTX: ReportContext = {
 function finding(
   ruleId: string,
   detail: Record<string, unknown>,
-  opts: { severity?: Severity; url?: string | null } = {},
+  opts: { severity?: Severity; url?: string | null; confidence?: Confidence } = {},
 ): FindingRow {
   return {
     ruleId,
     severity: opts.severity ?? 'medium',
+    confidence: opts.confidence ?? 'high',
     url: opts.url === undefined ? 'https://example.com/page' : opts.url,
     detail,
   };
@@ -83,15 +96,42 @@ function section(name: string): ReportSection {
 }
 
 describe('buildRows mappers', () => {
-  it('emits exactly one row per finding (1:1) for every section', () => {
+  it('emits exactly one row per finding (1:1) for every non-H1 section', () => {
     for (const s of REPORT_SECTIONS) {
-      const findings = s.ruleIds.map((id) => finding(id, {}));
+      // H1 is a special case: it consolidates findings at the same URL. Use
+      // distinct URLs so the 1:1 property still holds for distinct-URL findings.
+      const findings = s.ruleIds.map((id, i) =>
+        finding(id, {}, { url: `https://example.com/page-${i}` }),
+      );
       expect(s.buildRows(findings, CTX)).toHaveLength(findings.length);
     }
     // empty input → empty output, no throw.
     for (const s of REPORT_SECTIONS) {
       expect(s.buildRows([], CTX)).toEqual([]);
     }
+  });
+
+  it('every row carries the confidence from its finding (high by default)', () => {
+    // Spot-check a handful of sections: each row must carry confidence.
+    const sectionNames = ['Redirects', 'Broken Links', 'Titles', 'Performance', 'Mirrors'];
+    for (const name of sectionNames) {
+      const sec = section(name);
+      const findings = sec.ruleIds.map((id, i) =>
+        finding(id, {}, { url: `https://example.com/page-${i}`, confidence: 'high' }),
+      );
+      const rows = sec.buildRows(findings, CTX);
+      for (const row of rows) {
+        expect(row.confidence).toBe('high');
+      }
+    }
+  });
+
+  it('a low-confidence finding (e.g. origin-fallback perf) renders confidence as "low" in the row', () => {
+    const rows = section('Performance').buildRows(
+      [finding('perf.lcp', { strategy: 'mobile', lcpMs: 4200 }, { confidence: 'low' })],
+      CTX,
+    );
+    expect(rows[0].confidence).toBe('low');
   });
 
   it('Redirects: internal-redirect href/status; redirect-chain hops/loop', () => {
@@ -108,6 +148,7 @@ describe('buildRows mappers', () => {
     );
     expect(rows[0]).toMatchObject({
       severity: 'medium',
+      confidence: 'high',
       url: 'https://example.com/page',
       href: 'https://example.com/old',
       targetStatusCode: 301,
@@ -127,20 +168,18 @@ describe('buildRows mappers', () => {
       ],
       CTX,
     );
-    expect(rows[0]).toMatchObject({ href: '/dead', targetStatusCode: 404, linkType: 'internal' });
+    expect(rows[0]).toMatchObject({
+      href: '/dead',
+      targetStatusCode: 404,
+      linkType: 'internal',
+      confidence: 'high',
+    });
     expect(rows[1]).toMatchObject({
       href: 'https://x.test/500',
       targetStatusCode: 500,
       linkType: 'external',
+      confidence: 'high',
     });
-  });
-
-  it('External Links: href + rel', () => {
-    const rows = section('External Links').buildRows(
-      [finding('links.external-flag', { href: 'https://ext.test/', rel: 'noopener' })],
-      CTX,
-    );
-    expect(rows[0]).toMatchObject({ href: 'https://ext.test/', rel: 'noopener' });
   });
 
   it('Titles: derived issue label, duplicate count, multiple joined array', () => {
@@ -170,16 +209,106 @@ describe('buildRows mappers', () => {
     expect(rows[1]).toMatchObject({ issue: 'multiple', description: 'A, B', count: 2 });
   });
 
-  it('H1: multiple uses h1s array key joined', () => {
+  it('H1: single-rule url → 1:1 passthrough with correct issue/h1/count + confidence propagated', () => {
+    // Distinct URLs: each gets its own row (1:1).
     const rows = section('H1').buildRows(
       [
-        finding('meta.h1.duplicate', { h1: 'Welcome', duplicateCount: 2 }),
-        finding('meta.h1.multiple', { h1s: ['First', 'Second'], count: 2 }),
+        finding(
+          'meta.h1.duplicate',
+          { h1: 'Welcome', duplicateCount: 2 },
+          { url: 'https://example.com/a', confidence: 'high' },
+        ),
+        finding(
+          'meta.h1.multiple',
+          { h1s: ['First', 'Second'], count: 2 },
+          { url: 'https://example.com/b', confidence: 'medium' },
+        ),
       ],
       CTX,
     );
-    expect(rows[0]).toMatchObject({ issue: 'duplicate', h1: 'Welcome', count: 2 });
-    expect(rows[1]).toMatchObject({ issue: 'multiple', h1: 'First, Second', count: 2 });
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({
+      issue: 'duplicate',
+      h1: 'Welcome',
+      count: 2,
+      url: 'https://example.com/a',
+      confidence: 'high',
+    });
+    expect(rows[1]).toMatchObject({
+      issue: 'multiple',
+      h1: 'First, Second',
+      count: 2,
+      url: 'https://example.com/b',
+      confidence: 'medium',
+    });
+  });
+
+  it('H1 (Item 3): multiple rules on the SAME url collapse into one consolidated "structure" row', () => {
+    const url = 'https://example.com/page';
+    const rows = section('H1').buildRows(
+      [
+        finding('meta.h1.multiple', { h1s: ['First', 'Second'], count: 2 }, { url }),
+        finding('meta.h1.duplicate', { h1: 'Welcome', duplicateCount: 3 }, { url }),
+      ],
+      CTX,
+    );
+    // Two rules on the same URL → 1 consolidated row.
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ issue: 'structure', url });
+    // notes captures both sub-reasons.
+    expect(rows[0].notes).toContain('multiple');
+    expect(rows[0].notes).toContain('duplicate');
+    // h1 value comes from the best available field.
+    expect(typeof rows[0].h1 === 'string' || rows[0].h1 === null).toBe(true);
+    // Both findings have high confidence → grouped row has 'high'.
+    expect(rows[0].confidence).toBe('high');
+  });
+
+  it('H1 grouped row uses the minimum (weakest) confidence across the group', () => {
+    const url = 'https://example.com/page';
+    const rows = section('H1').buildRows(
+      [
+        finding('meta.h1.missing', {}, { url, confidence: 'high' }),
+        finding('meta.h1.duplicate', { h1: 'Dup', duplicateCount: 2 }, { url, confidence: 'low' }),
+      ],
+      CTX,
+    );
+    expect(rows).toHaveLength(1);
+    // One finding is 'high', one is 'low' → grouped row must use 'low' (the weakest).
+    expect(rows[0].confidence).toBe('low');
+  });
+
+  it('H1: three H1 rules on distinct urls each produce their own row', () => {
+    const rows = section('H1').buildRows(
+      [
+        finding('meta.h1.missing', {}, { url: 'https://example.com/1' }),
+        finding(
+          'meta.h1.duplicate',
+          { h1: 'Dup', duplicateCount: 2 },
+          { url: 'https://example.com/2' },
+        ),
+        finding(
+          'meta.h1.multiple',
+          { h1s: ['A', 'B'], count: 2 },
+          { url: 'https://example.com/3' },
+        ),
+      ],
+      CTX,
+    );
+    expect(rows).toHaveLength(3);
+    expect(rows[0]).toMatchObject({ issue: 'missing', url: 'https://example.com/1' });
+    expect(rows[1]).toMatchObject({
+      issue: 'duplicate',
+      h1: 'Dup',
+      count: 2,
+      url: 'https://example.com/2',
+    });
+    expect(rows[2]).toMatchObject({
+      issue: 'multiple',
+      h1: 'A, B',
+      count: 2,
+      url: 'https://example.com/3',
+    });
   });
 
   it('Duplicate Pages: contentHash + group size', () => {
@@ -283,7 +412,7 @@ describe('buildRows mappers', () => {
     });
   });
 
-  it('Performance: lcp ms; cls-inp metrics + issues; psi flags joined', () => {
+  it('Performance: lcp ms; cls-inp metrics + issues; psi flags joined; lab-score score', () => {
     const rows = section('Performance').buildRows(
       [
         finding('perf.lcp', { strategy: 'mobile', lcpMs: 3200 }),
@@ -297,6 +426,7 @@ describe('buildRows mappers', () => {
           strategy: 'mobile',
           flags: ['render-blocking', 'unused-css'],
         }),
+        finding('perf.lab-score', { strategy: 'mobile', score: 42 }),
       ],
       CTX,
     );
@@ -304,6 +434,10 @@ describe('buildRows mappers', () => {
     expect(rows[1]).toMatchObject({ strategy: 'desktop', cls: 0.25, inpMs: 350 });
     expect(rows[1].flags).toBe('cls, inp');
     expect(rows[2].flags).toBe('render-blocking, unused-css');
+    // lab-score row carries score and a recommendation.
+    expect(rows[3]).toMatchObject({ strategy: 'mobile', score: 42 });
+    expect(typeof rows[3].recommendation).toBe('string');
+    expect(rows[3].recommendation).toContain('Lighthouse');
   });
 
   it('Meta Templates: element/value/length + recommendation per template rule', () => {

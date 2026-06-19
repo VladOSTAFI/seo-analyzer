@@ -5,6 +5,7 @@ import type { AuditRepository } from '../audit/audit.repository';
 import type { ExtractService } from './extract.service';
 import type { ExtractedPage } from './crawl.types';
 import {
+  classifyPageKind,
   CrawlService,
   deriveStatusClass,
   looksLikeSpaShell,
@@ -84,6 +85,106 @@ describe('looksLikeSpaShell', () => {
   });
 });
 
+describe('classifyPageKind', () => {
+  // --- HTML cases ---
+  it('returns "html" for text/html content type', () => {
+    expect(classifyPageKind('text/html; charset=utf-8', 'seed', 'https://example.com/')).toBe(
+      'html',
+    );
+  });
+
+  it('returns "html" for application/xhtml+xml content type', () => {
+    expect(classifyPageKind('application/xhtml+xml', 'link', 'https://example.com/page')).toBe(
+      'html',
+    );
+  });
+
+  it('returns "html" when content type has extra parameters', () => {
+    expect(classifyPageKind('text/html; charset=UTF-8', 'link', 'https://example.com/about')).toBe(
+      'html',
+    );
+  });
+
+  // --- Sitemap cases ---
+  it('returns "sitemap" when crawlSource is "sitemap" regardless of content type', () => {
+    expect(classifyPageKind('application/xml', 'sitemap', 'https://example.com/sitemap.xml')).toBe(
+      'sitemap',
+    );
+  });
+
+  it('returns "sitemap" when crawlSource is "sitemap" even with html content type', () => {
+    expect(classifyPageKind('text/html', 'sitemap', 'https://example.com/sitemap.xml')).toBe(
+      'sitemap',
+    );
+  });
+
+  it('returns "sitemap" when URL contains "sitemap" and content type is XML', () => {
+    expect(classifyPageKind('application/xml', 'link', 'https://example.com/sitemap.xml')).toBe(
+      'sitemap',
+    );
+  });
+
+  it('returns "sitemap" when content type explicitly contains "sitemap"', () => {
+    expect(
+      classifyPageKind('application/x-sitemap+xml', 'link', 'https://example.com/sm.xml'),
+    ).toBe('sitemap');
+  });
+
+  // --- Feed cases ---
+  it('returns "feed" for application/rss+xml', () => {
+    expect(classifyPageKind('application/rss+xml', 'link', 'https://example.com/rss')).toBe('feed');
+  });
+
+  it('returns "feed" for application/atom+xml', () => {
+    expect(classifyPageKind('application/atom+xml', 'link', 'https://example.com/atom')).toBe(
+      'feed',
+    );
+  });
+
+  it('returns "feed" for URL containing /feed', () => {
+    expect(classifyPageKind('text/html', 'link', 'https://example.com/feed')).toBe('feed');
+  });
+
+  it('returns "feed" for URL containing /rss', () => {
+    expect(classifyPageKind('text/html', 'link', 'https://example.com/rss')).toBe('feed');
+  });
+
+  it('returns "feed" for .rss URL extension', () => {
+    expect(classifyPageKind('application/rss+xml', 'link', 'https://example.com/news.rss')).toBe(
+      'feed',
+    );
+  });
+
+  // --- Other cases ---
+  it('returns "other" for image/jpeg', () => {
+    expect(classifyPageKind('image/jpeg', 'link', 'https://example.com/photo.jpg')).toBe('other');
+  });
+
+  it('returns "other" for application/pdf', () => {
+    expect(classifyPageKind('application/pdf', 'link', 'https://example.com/doc.pdf')).toBe(
+      'other',
+    );
+  });
+
+  it('returns "other" for null content type with non-matching URL', () => {
+    expect(classifyPageKind(null, 'link', 'https://example.com/unknown')).toBe('other');
+  });
+
+  it('returns "other" for application/json', () => {
+    expect(classifyPageKind('application/json', 'link', 'https://example.com/api/data')).toBe(
+      'other',
+    );
+  });
+
+  // --- Sitemap takes priority over feed ---
+  it('sitemap wins over feed when both URL and content type match sitemap', () => {
+    // A URL with both "sitemap" and "/feed" in it — sitemap checked first.
+    expect(
+      classifyPageKind('application/xml', 'sitemap', 'https://example.com/sitemap-feed.xml'),
+    ).toBe('sitemap');
+  });
+});
+
 describe('row mappers', () => {
   it('toPageRow derives statusClass and passes arrays through to jsonb columns', () => {
     const extracted = emptyExtracted({
@@ -105,6 +206,50 @@ describe('row mappers', () => {
     expect(row.blockedByRobotsTxt).toBe(false);
     // url is normalized for the (auditId, url) unique index.
     expect(row.url).toBe('https://example.com/');
+  });
+
+  it('toPageRow sets pageKind to "html" for a regular HTML seed page', () => {
+    const row = toPageRow(
+      AUDIT_ID,
+      collected({ contentType: 'text/html; charset=utf-8', crawlSource: 'seed' as const }),
+    );
+    expect(row.pageKind).toBe('html');
+  });
+
+  it('toPageRow sets pageKind to "sitemap" for a sitemap crawl source', () => {
+    const row = toPageRow(
+      AUDIT_ID,
+      collected({
+        url: 'https://example.com/sitemap.xml',
+        finalUrl: 'https://example.com/sitemap.xml',
+        contentType: 'application/xml',
+        crawlSource: 'sitemap' as const,
+      }),
+    );
+    expect(row.pageKind).toBe('sitemap');
+  });
+
+  it('toPageRow sets pageKind to "feed" for an RSS content type', () => {
+    const row = toPageRow(
+      AUDIT_ID,
+      collected({
+        url: 'https://example.com/rss.xml',
+        finalUrl: 'https://example.com/rss.xml',
+        contentType: 'application/rss+xml',
+        crawlSource: 'link' as const,
+      }),
+    );
+    expect(row.pageKind).toBe('feed');
+  });
+
+  it('toPageRow forwards responseTimeMs to the row', () => {
+    const row = toPageRow(AUDIT_ID, collected({ responseTimeMs: 342 }));
+    expect(row.responseTimeMs).toBe(342);
+  });
+
+  it('toPageRow passes null responseTimeMs through unchanged', () => {
+    const row = toPageRow(AUDIT_ID, collected({ responseTimeMs: null }));
+    expect(row.responseTimeMs).toBeNull();
   });
 
   it('toLinkRows records both internal and external links with rel passed through', () => {
@@ -174,6 +319,13 @@ describe('CrawlService.crawl', () => {
       LINK_VERIFY_RETRIES: 2,
       LINK_VERIFY_USER_AGENT: 'TestBrowser/1.0',
       LINK_VERIFY_MAX: 500,
+      EXTERNAL_VERIFY_ENABLED: false,
+      IMAGE_VERIFY_ENABLED: false,
+      EXTERNAL_VERIFY_MAX: 200,
+      EXTERNAL_VERIFY_PER_HOST: 20,
+      RULE_EXTERNAL_FLAG_ENABLED: false,
+      PERF_FLAG_ROLLUP_PCT: 0.6,
+      PERF_LAB_SCORE_MIN: 90,
       OUTPUT_DIR: './output',
       API_PORT: 3000,
       JWT_ACCESS_TTL: '15m',
@@ -259,5 +411,22 @@ describe('CrawlService.crawl', () => {
 
     await expect(service.crawl(AUDIT_ID)).rejects.toBe(boom);
     expect(audits.markFailed).toHaveBeenCalledWith(AUDIT_ID, 'crawl');
+  });
+
+  it('persists responseTimeMs from a collected page that has it set', async () => {
+    const { db, audits, extract } = makeDeps();
+    const service = new CrawlService(db, makeEnv(), audits, extract);
+
+    const page = collected({ responseTimeMs: 123 });
+    jest
+      .spyOn(service as unknown as { runCrawler: () => Promise<unknown[]> }, 'runCrawler')
+      .mockResolvedValue([page]);
+
+    // toPageRow forwards responseTimeMs — verify via the row mapper directly.
+    const row = toPageRow(AUDIT_ID, page);
+    expect(row.responseTimeMs).toBe(123);
+
+    await service.crawl(AUDIT_ID);
+    // Service ran without error; timing flows through persist normally.
   });
 });

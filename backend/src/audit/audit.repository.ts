@@ -102,4 +102,31 @@ export class AuditRepository {
     }
     return audit;
   }
+
+  /**
+   * Item 14 — Write live pipeline progress so a polling client can distinguish
+   * the long PSI stage from analysis without a new audit_status enum value.
+   *
+   * Best-effort: errors are swallowed by the caller (runStage wrapper) so a DB
+   * hiccup here never aborts the pipeline. The `progress` jsonb is `{ stage,
+   * startedAt }` where `startedAt` is an ISO-8601 string.
+   */
+  async setProgress(id: string, stage: string): Promise<void> {
+    await this.db
+      .update(audits)
+      .set({
+        progress: { stage, startedAt: new Date().toISOString() },
+        updatedAt: new Date(),
+      })
+      .where(eq(audits.id, id));
+  }
+
+  /**
+   * Item 12 — Persist the end-of-pipeline coverage manifest to `audits.coverage`.
+   * Best-effort: the caller swallows errors so a write failure here never marks
+   * the audit failed.
+   */
+  async setCoverage(id: string, coverage: Record<string, unknown>): Promise<void> {
+    await this.db.update(audits).set({ coverage, updatedAt: new Date() }).where(eq(audits.id, id));
+  }
 }

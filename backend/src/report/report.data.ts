@@ -2,7 +2,7 @@ import { sql } from 'drizzle-orm';
 import type { Database } from '../db/db.types';
 import { InvalidArgumentError } from '../common/errors';
 import type { Audit } from '../db/schema';
-import type { Severity } from '../analyze/rule.types';
+import type { Confidence, Severity } from '../analyze/rule.types';
 import type { FindingRow } from './report.types';
 
 /**
@@ -26,7 +26,8 @@ export async function loadReportData(
   auditId: string,
 ): Promise<{ audit: Audit; findings: FindingRow[] }> {
   const auditResult = await db.execute(sql`
-    select id, start_url, status, failed_stage, report_path, owner_id, created_at, updated_at
+    select id, start_url, status, failed_stage, report_path, progress, coverage,
+           owner_id, created_at, updated_at
     from audits
     where id = ${auditId}
     limit 1
@@ -45,13 +46,15 @@ export async function loadReportData(
     status: auditRow.status as Audit['status'],
     failedStage: (auditRow.failed_stage as string | null) ?? null,
     reportPath: (auditRow.report_path as string | null) ?? null,
+    progress: (auditRow.progress as Audit['progress']) ?? null,
+    coverage: (auditRow.coverage as Audit['coverage']) ?? null,
     ownerId: (auditRow.owner_id as string | null) ?? null,
     createdAt: auditRow.created_at as Date,
     updatedAt: auditRow.updated_at as Date,
   };
 
   const findingsResult = await db.execute(sql`
-    select rule_id, severity, url, detail
+    select rule_id, severity, confidence, url, detail
     from findings
     where audit_id = ${auditId}
     order by
@@ -70,6 +73,8 @@ export async function loadReportData(
   const findings: FindingRow[] = findingsResult.rows.map((row) => ({
     ruleId: row.rule_id as string,
     severity: row.severity as Severity,
+    // Default to 'high' for pre-migration rows where confidence may be NULL.
+    confidence: ((row.confidence as Confidence | null) ?? 'high') as Confidence,
     url: (row.url as string | null) ?? null,
     detail: (row.detail as Record<string, unknown> | null) ?? {},
   }));

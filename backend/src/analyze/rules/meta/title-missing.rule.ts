@@ -4,8 +4,9 @@ import type { Rule } from '../../rule.types';
 /**
  * `meta.title.missing` — Page has no `<title>`.
  *
- * Severity: high. Scoped to successfully-fetched (2xx) HTML pages only — a
- * non-2xx response legitimately has no title.
+ * Severity: high. Scoped to successfully-fetched (2xx) HTML pages only (page_kind gated) — a
+ * non-2xx response legitimately has no title, and non-HTML pages (sitemaps, feeds, etc.)
+ * should not be checked for an HTML title element.
  *
  * SQL mechanism: `jsonb_array_length(title) = 0`.
  */
@@ -19,6 +20,7 @@ export const metaTitleMissingRule: Rule = {
       from pages
       where audit_id = ${auditId}
         and status_class = '2xx'
+        and page_kind = 'html'
         and jsonb_array_length(title) = 0
       order by url
     `);

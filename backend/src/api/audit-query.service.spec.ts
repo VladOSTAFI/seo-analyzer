@@ -114,17 +114,57 @@ describe('AuditQueryService.getAudit (owner scope, Phase A3)', () => {
       status: 'done',
       failed_stage: null,
       report_path: null,
+      progress: null,
+      coverage: null,
       created_at: '2026-06-02T00:00:00.000Z',
       updated_at: '2026-06-02T00:00:00.000Z',
     };
-    // call 0 = audit row, call 1 = bySeverity group rows.
-    const { service } = buildService([[auditRow], [{ severity: 'high', count: '2' }]]);
+    // call 0 = audit row, call 1 = bySeverity group rows, call 2 = findings for distinctIssues.
+    const { service } = buildService([
+      [auditRow],
+      [{ severity: 'high', count: '2' }],
+      [], // empty findings → distinctIssues = 0
+    ]);
 
     const result = await service.getAudit('aid', USER);
 
     expect(result?.id).toBe('aid');
     expect(result?.findingsTotal).toBe(2);
     expect(result?.bySeverity).toEqual({ critical: 0, high: 2, medium: 0, low: 0, info: 0 });
+  });
+
+  it('Items 14/12/13: surfaces progress, coverage, and distinctIssues on the detail DTO', async () => {
+    const progress = { stage: 'perf', startedAt: '2026-06-11T10:00:00.000Z' };
+    const coverage = { pagesCrawled: 50, crawlCap: 500, capHit: false };
+    const auditRow = {
+      id: 'aid',
+      start_url: 'https://example.com/',
+      status: 'analyzing',
+      failed_stage: null,
+      report_path: null,
+      progress,
+      coverage,
+      created_at: '2026-06-02T00:00:00.000Z',
+      updated_at: '2026-06-02T00:00:00.000Z',
+    };
+    // bySeverity: 1 critical, distinctIssues findings: 2 rules same url + 1 separate
+    const findingsForDistinct = [
+      { rule_id: 'meta.h1.missing', url: 'https://example.com/p1' },
+      { rule_id: 'meta.h1.duplicate', url: 'https://example.com/p1' }, // same family+url → 1 distinct
+      { rule_id: 'meta.title.missing', url: 'https://example.com/p2' }, // different → 1 more
+    ];
+    const { service } = buildService([
+      [auditRow],
+      [{ severity: 'critical', count: '3' }],
+      findingsForDistinct,
+    ]);
+
+    const result = await service.getAudit('aid', USER);
+
+    expect(result?.progress).toEqual(progress);
+    expect(result?.coverage).toEqual(coverage);
+    // meta.h1 × /p1 and meta.title × /p2 → 2 distinct issues (3 raw findings).
+    expect(result?.distinctIssues).toBe(2);
   });
 });
 
@@ -153,5 +193,71 @@ describe('AuditQueryService.auditExists (owner scope, Phase A3)', () => {
     const [q] = renderedQueries(execute);
     expect(q.sql).not.toContain('owner_id =');
     expect(q.params).not.toContain(ADMIN.id);
+  });
+});
+
+describe('AuditQueryService.listFindings — confidence surfaced on FindingDto', () => {
+  it('includes confidence in the SELECT query (SQL contains the confidence column)', async () => {
+    // call 0 = page rows (empty), call 1 = count row.
+    const { service, execute } = buildService([[], [{ total: '0' }]]);
+
+    await service.listFindings('audit-1', { limit: 50, offset: 0 });
+
+    const [pageQuery] = renderedQueries(execute);
+    // The SELECT must include 'confidence' so the mapper can read it.
+    expect(pageQuery.sql).toContain('confidence');
+  });
+
+  it('maps confidence from the DB row onto the FindingDto', async () => {
+    const findingRows = [
+      {
+        id: 'f1',
+        rule_id: 'perf.lcp',
+        severity: 'high',
+        confidence: 'low', // origin-level CrUX fallback
+        url: 'https://example.com/',
+        detail: { strategy: 'mobile', lcpMs: 4200 },
+        created_at: '2026-06-11T00:00:00.000Z',
+      },
+      {
+        id: 'f2',
+        rule_id: 'meta.title.missing',
+        severity: 'medium',
+        confidence: 'high',
+        url: 'https://example.com/page',
+        detail: {},
+        created_at: '2026-06-11T00:00:00.000Z',
+      },
+    ];
+
+    const { service } = buildService([findingRows, [{ total: '2' }]]);
+
+    const result = await service.listFindings('audit-1', { limit: 50, offset: 0 });
+
+    expect(result.items).toHaveLength(2);
+    // The low-confidence perf finding (origin-level CrUX) renders as 'low'.
+    expect(result.items[0].confidence).toBe('low');
+    // The directly-observed title finding renders as 'high'.
+    expect(result.items[1].confidence).toBe('high');
+  });
+
+  it('defaults confidence to "high" when the DB column returns null (pre-migration rows)', async () => {
+    const findingRows = [
+      {
+        id: 'f1',
+        rule_id: 'meta.title.missing',
+        severity: 'medium',
+        confidence: null, // pre-migration row with no confidence set
+        url: 'https://example.com/page',
+        detail: {},
+        created_at: '2026-06-11T00:00:00.000Z',
+      },
+    ];
+
+    const { service } = buildService([findingRows, [{ total: '1' }]]);
+
+    const result = await service.listFindings('audit-1', { limit: 50, offset: 0 });
+
+    expect(result.items[0].confidence).toBe('high');
   });
 });

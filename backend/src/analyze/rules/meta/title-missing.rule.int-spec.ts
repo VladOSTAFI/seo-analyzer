@@ -34,4 +34,47 @@ describe('meta.title.missing (int)', () => {
 
     expect(findings).toEqual([{ url: 'https://t/missing', detail: {} }]);
   });
+
+  it('produces zero findings for non-HTML page kinds even when title is empty', async () => {
+    await seedPages(auditId, [
+      // XML sitemap (page_kind 'sitemap') — must be ignored EVEN THOUGH the server
+      // mislabels it as text/html. This is the regression the page_kind gate fixes.
+      {
+        url: 'https://t/sitemap.xml',
+        statusClass: '2xx',
+        contentType: 'text/html; charset=utf-8',
+        pageKind: 'sitemap',
+        title: [],
+      },
+      // RSS feed — must be ignored
+      {
+        url: 'https://t/feed',
+        statusClass: '2xx',
+        contentType: 'application/rss+xml',
+        pageKind: 'feed',
+        title: [],
+      },
+      // plain-text / non-HTML resource — must be ignored
+      {
+        url: 'https://t/robots.txt',
+        statusClass: '2xx',
+        contentType: 'text/plain',
+        pageKind: 'other',
+        title: [],
+      },
+      // HTML page with empty title — must fire
+      {
+        url: 'https://t/html-missing',
+        statusClass: '2xx',
+        contentType: 'text/html; charset=utf-8',
+        pageKind: 'html',
+        title: [],
+      },
+    ]);
+
+    const findings = await runRule(metaTitleMissingRule, auditId);
+
+    const urls = findings.map((f) => f.url).sort();
+    expect(urls).toEqual(['https://t/html-missing']);
+  });
 });

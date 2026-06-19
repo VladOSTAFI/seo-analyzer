@@ -271,7 +271,7 @@ export class PerformanceService {
       .select({ pageUrl: performance.pageUrl, strategy: performance.strategy })
       .from(performance)
       .where(eq(performance.auditId, auditId));
-    const existing = new Set(existingRows.map((r) => `${r.pageUrl} ${r.strategy}`));
+    const existing = new Set(existingRows.map((r) => `${r.pageUrl} ${r.strategy}`));
 
     const newRows: NewPerformance[] = [];
     let cached = 0;
@@ -279,7 +279,7 @@ export class PerformanceService {
 
     for (const sample of samples) {
       for (const strategy of PSI_STRATEGIES) {
-        if (existing.has(`${sample.url} ${strategy}`)) {
+        if (existing.has(`${sample.url} ${strategy}`)) {
           cached += 1;
           continue;
         }
@@ -297,6 +297,8 @@ export class PerformanceService {
             tbtMs: m.tbtMs,
             speedIndexMs: m.speedIndexMs,
             usabilityFlags: m.usabilityFlags,
+            isOriginFallback: m.isOriginFallback,
+            cwvSource: m.cwvSource,
             psiRaw: m.raw,
           });
         } catch (fetchErr) {
@@ -327,6 +329,8 @@ export class PerformanceService {
             tbtMs: sql`excluded.tbt_ms`,
             speedIndexMs: sql`excluded.speed_index_ms`,
             usabilityFlags: sql`excluded.usability_flags`,
+            isOriginFallback: sql`excluded.is_origin_fallback`,
+            cwvSource: sql`excluded.cwv_source`,
             psiRaw: sql`excluded.psi_raw`,
             fetchedAt: sql`now()`,
           },
@@ -360,7 +364,8 @@ export class PerformanceService {
             collected.push({
               auditId,
               ruleId: rule.id,
-              severity: rule.severity,
+              severity: f.severity ?? rule.severity,
+              confidence: f.confidence ?? rule.confidence ?? 'high',
               url: f.url,
               detail: f.detail ?? {},
             });

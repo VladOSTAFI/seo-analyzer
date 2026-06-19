@@ -58,16 +58,23 @@ const DEFAULT_VERIFY = {
   verifyInconclusive: 0,
 };
 
+const DEFAULT_EXTERNAL_PROBE = { externalsVerified: 0, truncated: false };
+const DEFAULT_IMAGE_PROBE = { imagesVerified: 0, truncated: false };
+
 function makeDeps(
   opts: {
     pageCount?: number;
     counts?: CannedCounts;
     verify?: typeof DEFAULT_VERIFY;
+    externalProbe?: typeof DEFAULT_EXTERNAL_PROBE;
+    imageProbe?: typeof DEFAULT_IMAGE_PROBE;
   } = {},
 ) {
   const pageCount = opts.pageCount ?? 5;
   const counts = opts.counts ?? DEFAULT_COUNTS;
   const verify = opts.verify ?? DEFAULT_VERIFY;
+  const externalProbe = opts.externalProbe ?? DEFAULT_EXTERNAL_PROBE;
+  const imageProbe = opts.imageProbe ?? DEFAULT_IMAGE_PROBE;
 
   // The tx executor: UPDATEs resolve to an empty result; the eight summary
   // SELECTs (collectSummary) resolve to the canned counts in issue order. A
@@ -106,6 +113,8 @@ function makeDeps(
 
   const linkVerifier = {
     verifyBrokenLinks: jest.fn().mockResolvedValue(verify),
+    probeExternalLinks: jest.fn().mockResolvedValue(externalProbe),
+    probeImages: jest.fn().mockResolvedValue(imageProbe),
   } as unknown as jest.Mocked<LinkVerifierService>;
 
   return { db, dbExecute, tx, txExecute, transaction, auditRepo, linkVerifier, counts };
@@ -138,6 +147,8 @@ describe('EnrichService.enrich', () => {
     expect(auditRepo.markFailed).not.toHaveBeenCalled();
     expect(transaction).not.toHaveBeenCalled();
     expect(linkVerifier.verifyBrokenLinks).not.toHaveBeenCalled();
+    expect(linkVerifier.probeExternalLinks).not.toHaveBeenCalled();
+    expect(linkVerifier.probeImages).not.toHaveBeenCalled();
   });
 
   it('runs all enrichment work inside a single transaction', async () => {
@@ -161,6 +172,30 @@ describe('EnrichService.enrich', () => {
     expect(txOrder).toBeLessThan(verifyOrder);
   });
 
+  it('runs the external probe pass AFTER the transaction commits', async () => {
+    const { db, auditRepo, transaction, linkVerifier } = makeDeps();
+    const service = new EnrichService(db, auditRepo, linkVerifier);
+
+    await service.enrich(AUDIT_ID);
+
+    expect(linkVerifier.probeExternalLinks).toHaveBeenCalledWith(AUDIT_ID);
+    const txOrder = transaction.mock.invocationCallOrder[0];
+    const probeOrder = (linkVerifier.probeExternalLinks as jest.Mock).mock.invocationCallOrder[0];
+    expect(txOrder).toBeLessThan(probeOrder);
+  });
+
+  it('runs the image probe pass AFTER the transaction commits', async () => {
+    const { db, auditRepo, transaction, linkVerifier } = makeDeps();
+    const service = new EnrichService(db, auditRepo, linkVerifier);
+
+    await service.enrich(AUDIT_ID);
+
+    expect(linkVerifier.probeImages).toHaveBeenCalledWith(AUDIT_ID);
+    const txOrder = transaction.mock.invocationCallOrder[0];
+    const probeOrder = (linkVerifier.probeImages as jest.Mock).mock.invocationCallOrder[0];
+    expect(txOrder).toBeLessThan(probeOrder);
+  });
+
   it('marks the audit failed at stage "enrich" and rethrows on a txn error', async () => {
     const { db, auditRepo, transaction, linkVerifier } = makeDeps();
     const boom = new Error('boom');
@@ -174,13 +209,20 @@ describe('EnrichService.enrich', () => {
     expect(auditRepo.markFailed).toHaveBeenCalledWith(AUDIT_ID, 'enrich');
   });
 
-  it('returns an EnrichSummary assembled from the canned counts (zero verify by default)', async () => {
+  it('returns an EnrichSummary assembled from the canned counts (zero verify + probe by default)', async () => {
     const { db, auditRepo, counts, linkVerifier } = makeDeps();
     const service = new EnrichService(db, auditRepo, linkVerifier);
 
     const summary = await service.enrich(AUDIT_ID);
 
-    expect(summary).toEqual({ ...counts, ...DEFAULT_VERIFY });
+    expect(summary).toEqual({
+      ...counts,
+      ...DEFAULT_VERIFY,
+      externalsVerified: 0,
+      externalsTruncated: false,
+      imagesVerified: 0,
+      imagesTruncated: false,
+    });
   });
 
   it('folds the verification counts into the summary and recomputes broken when false positives cleared', async () => {
@@ -222,6 +264,56 @@ describe('EnrichService.enrich', () => {
 
     expect(auditRepo.setStatus).toHaveBeenCalledTimes(1);
     expect(auditRepo.setStatus).toHaveBeenCalledWith(AUDIT_ID, 'enriching');
+    expect(auditRepo.markFailed).not.toHaveBeenCalled();
+  });
+
+  it('folds external probe counts into the summary', async () => {
+    const externalProbe = { externalsVerified: 15, truncated: true };
+    const { db, auditRepo, linkVerifier } = makeDeps({ externalProbe });
+    const service = new EnrichService(db, auditRepo, linkVerifier);
+
+    const summary = await service.enrich(AUDIT_ID);
+
+    expect(summary.externalsVerified).toBe(15);
+    expect(summary.externalsTruncated).toBe(true);
+  });
+
+  it('folds image probe counts into the summary', async () => {
+    const imageProbe = { imagesVerified: 8, truncated: false };
+    const { db, auditRepo, linkVerifier } = makeDeps({ imageProbe });
+    const service = new EnrichService(db, auditRepo, linkVerifier);
+
+    const summary = await service.enrich(AUDIT_ID);
+
+    expect(summary.imagesVerified).toBe(8);
+    expect(summary.imagesTruncated).toBe(false);
+  });
+
+  it('external probe failure does not fail enrich (best-effort contract)', async () => {
+    const { db, auditRepo, linkVerifier } = makeDeps();
+    // probeExternalLinks resolves (not rejects) even on error — that is the
+    // contract of the best-effort wrapper inside LinkVerifierService. Simulate
+    // the wrapper already having caught and swallowed an internal error:
+    (linkVerifier.probeExternalLinks as jest.Mock).mockResolvedValueOnce({
+      externalsVerified: 0,
+      truncated: false,
+    });
+    const service = new EnrichService(db, auditRepo, linkVerifier);
+
+    // Must not throw.
+    await expect(service.enrich(AUDIT_ID)).resolves.toBeDefined();
+    expect(auditRepo.markFailed).not.toHaveBeenCalled();
+  });
+
+  it('image probe failure does not fail enrich (best-effort contract)', async () => {
+    const { db, auditRepo, linkVerifier } = makeDeps();
+    (linkVerifier.probeImages as jest.Mock).mockResolvedValueOnce({
+      imagesVerified: 0,
+      truncated: false,
+    });
+    const service = new EnrichService(db, auditRepo, linkVerifier);
+
+    await expect(service.enrich(AUDIT_ID)).resolves.toBeDefined();
     expect(auditRepo.markFailed).not.toHaveBeenCalled();
   });
 });

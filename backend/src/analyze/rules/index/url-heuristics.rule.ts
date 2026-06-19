@@ -4,9 +4,9 @@ import type { Finding, Rule } from '../../rule.types';
 /**
  * `index.url-heuristics` — Non-SEO-friendly URLs (ЧПУ).
  *
- * Severity: low.
+ * Severity: low. HTML pages only (content-type gated).
  *
- * Over fetched 2xx pages we compute four independent heuristics in SQL and
+ * Over fetched 2xx HTML pages we compute four independent heuristics in SQL and
  * assemble the tripped ones into `issues` in JS:
  *  - `uppercase`     — an uppercase letter in the path/query (NOT the scheme or
  *                      host, whose casing is not author-controlled / not an SEO
@@ -41,6 +41,7 @@ export const indexUrlHeuristicsRule: Rule = {
         from pages p
         where p.audit_id = ${auditId}
           and p.status_class = '2xx'
+          and (p.content_type is null or p.content_type like 'text/html%')
       ) h
       where has_uppercase or has_underscore or has_query or too_long
       order by url

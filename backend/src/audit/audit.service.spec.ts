@@ -19,6 +19,9 @@ const ENRICH = {
   hreflangReciprocal: 0,
   redirectChainPages: 0,
   redirectLoopPages: 0,
+  linksVerified: 0,
+  falsePositivesCleared: 0,
+  verifyInconclusive: 0,
 };
 const ANALYZE = {
   totalFindings: 7,
@@ -40,6 +43,7 @@ const REPORT = {
   sheets: 9,
   totalFindings: 8,
   bySeverity: { critical: 1, high: 2, medium: 3, low: 1, info: 1 },
+  distinctIssues: 6,
 };
 
 const AUDIT_ID = '11111111-2222-3333-4444-555555555555';
@@ -89,17 +93,40 @@ function buildService() {
     assertExists: jest.fn().mockResolvedValue({ id: AUDIT_ID, startUrl: 'https://x.test/' }),
     setStatus: jest.fn().mockResolvedValue(undefined),
     markFailed: jest.fn().mockResolvedValue(undefined),
+    // Item 14: progress tracking — best-effort, must not break the pipeline.
+    setProgress: jest.fn().mockResolvedValue(undefined),
+    // Item 12: coverage persistence — best-effort.
+    setCoverage: jest.fn().mockResolvedValue(undefined),
   } as unknown as jest.Mocked<AuditRepository>;
 
   // Drizzle insert(...).values(...).returning(...) chain → one row with the id.
   const returning = jest.fn().mockResolvedValue([{ id: AUDIT_ID }]);
   const values = jest.fn().mockReturnValue({ returning });
   const insert = jest.fn().mockReturnValue({ values });
-  const db = { insert } as unknown as Database;
+
+  // db.execute is called by persistCoverage (CWV counts + external links count).
+  // Return empty result sets so the coverage manifest assembles with zeros.
+  const execute = jest
+    .fn()
+    .mockResolvedValue({ rows: [{ field_count: 0, origin_count: 0, lab_count: 0, total: '0' }] });
+
+  const db = { insert, execute } as unknown as Database;
 
   const service = new AuditService(crawl, enrich, analyze, performance, report, auditRepo, db);
 
-  return { service, order, crawl, enrich, analyze, performance, report, auditRepo, insert, values };
+  return {
+    service,
+    order,
+    crawl,
+    enrich,
+    analyze,
+    performance,
+    report,
+    auditRepo,
+    insert,
+    values,
+    execute,
+  };
 }
 
 describe('AuditService.runAll', () => {
@@ -148,6 +175,59 @@ describe('AuditService.runAll', () => {
       performance: PERF,
       report: REPORT,
     });
+  });
+
+  it('Item 14: writes progress at the START of each stage (best-effort)', async () => {
+    const { service, auditRepo } = buildService();
+
+    await service.runAll(AUDIT_ID);
+
+    // setProgress is called once per stage: crawl, enrich, analyze, perf, report.
+    expect(auditRepo.setProgress).toHaveBeenCalledTimes(5);
+    expect(auditRepo.setProgress).toHaveBeenCalledWith(AUDIT_ID, 'crawl');
+    expect(auditRepo.setProgress).toHaveBeenCalledWith(AUDIT_ID, 'enrich');
+    expect(auditRepo.setProgress).toHaveBeenCalledWith(AUDIT_ID, 'analyze');
+    expect(auditRepo.setProgress).toHaveBeenCalledWith(AUDIT_ID, 'perf');
+    expect(auditRepo.setProgress).toHaveBeenCalledWith(AUDIT_ID, 'report');
+  });
+
+  it('Item 14: a setProgress failure is swallowed (best-effort) and the pipeline continues', async () => {
+    const { service, auditRepo, report } = buildService();
+    (auditRepo.setProgress as jest.Mock).mockRejectedValue(new Error('DB hiccup'));
+
+    // Pipeline must complete successfully despite setProgress throwing.
+    await expect(service.runAll(AUDIT_ID)).resolves.toMatchObject({ status: 'done' });
+    expect(report.generate).toHaveBeenCalledWith(AUDIT_ID);
+  });
+
+  it('Item 12: assembles and persists coverage manifest at the end of runAll', async () => {
+    const { service, auditRepo } = buildService();
+
+    await service.runAll(AUDIT_ID);
+
+    expect(auditRepo.setCoverage).toHaveBeenCalledTimes(1);
+    const [calledId, manifest] = (auditRepo.setCoverage as jest.Mock).mock.calls[0] as [
+      string,
+      Record<string, unknown>,
+    ];
+    expect(calledId).toBe(AUDIT_ID);
+    // Basic shape of the coverage manifest.
+    expect(typeof manifest.pagesCrawled).toBe('number');
+    expect(manifest.pagesCrawled).toBe(CRAWL.pages);
+    expect(typeof manifest.crawlCap).toBe('number');
+    expect(typeof manifest.capHit).toBe('boolean');
+    expect(manifest.externalLinks).toBeDefined();
+    expect(manifest.images).toBeDefined();
+    expect(manifest.cwvSource).toBeDefined();
+    expect(Array.isArray(manifest.rulesInert)).toBe(true);
+  });
+
+  it('Item 12: a setCoverage failure is swallowed (best-effort) and the pipeline still sets done', async () => {
+    const { service, auditRepo } = buildService();
+    (auditRepo.setCoverage as jest.Mock).mockRejectedValue(new Error('coverage write failed'));
+
+    await expect(service.runAll(AUDIT_ID)).resolves.toMatchObject({ status: 'done' });
+    expect(auditRepo.setStatus).toHaveBeenCalledWith(AUDIT_ID, 'done');
   });
 
   it('stops at the failing stage: markFailed(stage) called, later stages skipped, no done, rejects', async () => {

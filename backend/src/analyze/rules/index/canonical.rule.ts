@@ -4,9 +4,9 @@ import type { Finding, Rule } from '../../rule.types';
 /**
  * `index.canonical` — Canonical missing / non-self on a live page.
  *
- * Severity: high.
+ * Severity: high. HTML pages only (content-type gated).
  *
- * Over fetched 2xx pages, a SQL CASE classifies the canonical problem:
+ * Over fetched 2xx HTML pages, a SQL CASE classifies the canonical problem:
  *  - `canonical_url IS NULL`  → `issue: 'missing'` (no canonical declared);
  *  - `is_self_canonical = false` → `issue: 'non-self'` (canonical points to a
  *    different URL than the page itself).
@@ -32,6 +32,7 @@ export const indexCanonicalRule: Rule = {
         from pages p
         where p.audit_id = ${auditId}
           and p.status_class = '2xx'
+          and (p.content_type is null or p.content_type like 'text/html%')
       ) classified
       where issue is not null
       order by url

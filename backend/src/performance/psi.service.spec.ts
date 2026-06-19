@@ -11,6 +11,7 @@ function loadFixture(name: string): Record<string, unknown> {
 
 const MOBILE_FULL = loadFixture('mobile-full.json');
 const DESKTOP_LAB_ONLY = loadFixture('desktop-lab-only.json');
+const MOBILE_ORIGIN_FALLBACK = loadFixture('mobile-origin-fallback.json');
 
 /**
  * Build a minimal fake Env exposing just the fields PsiService reads. A high
@@ -201,5 +202,68 @@ describe('PsiService.fetch', () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+
+  describe('CWV provenance (cwvSource + isOriginFallback)', () => {
+    it('reports cwvSource=field and isOriginFallback=false for a normal page-level response', async () => {
+      global.fetch = okFetch(MOBILE_FULL);
+      const service = new PsiService(fakeEnv());
+
+      const metrics = await service.fetch('https://example.com/', 'mobile');
+
+      expect(metrics.cwvSource).toBe('field');
+      expect(metrics.isOriginFallback).toBe(false);
+    });
+
+    it('reports cwvSource=lab and isOriginFallback=false when loadingExperience is absent', async () => {
+      global.fetch = okFetch(DESKTOP_LAB_ONLY);
+      const service = new PsiService(fakeEnv());
+
+      const metrics = await service.fetch('https://example.com/low-traffic', 'desktop');
+
+      // No loadingExperience → no field data; lab LCP/CLS are present.
+      expect(metrics.cwvSource).toBe('lab');
+      expect(metrics.isOriginFallback).toBe(false);
+    });
+
+    it('reports cwvSource=field and isOriginFallback=true when origin_fallback=true with field metrics', async () => {
+      global.fetch = okFetch(MOBILE_ORIGIN_FALLBACK);
+      const service = new PsiService(fakeEnv());
+
+      const metrics = await service.fetch('https://example.com/some-page', 'mobile');
+
+      // origin_fallback=true in loadingExperience AND field metrics present.
+      expect(metrics.cwvSource).toBe('field');
+      expect(metrics.isOriginFallback).toBe(true);
+
+      // CWV values are still parsed from the origin-level field metrics.
+      expect(metrics.lcpMs).toBe(4100);
+      expect(metrics.cls).toBe(0.15); // percentile 15 ÷ 100
+      expect(metrics.inpMs).toBe(320);
+    });
+
+    it('reports cwvSource=none and isOriginFallback=false when no CWV data at all', async () => {
+      // Construct a minimal response: no loadingExperience and no lab LCP/CLS audits.
+      const noData = {
+        lighthouseResult: {
+          categories: {
+            performance: { id: 'performance', score: 0.8, auditRefs: [] },
+          },
+          audits: {
+            'first-contentful-paint': { score: 0.9, numericValue: 1000 },
+          },
+        },
+      };
+      global.fetch = okFetch(noData);
+      const service = new PsiService(fakeEnv());
+
+      const metrics = await service.fetch('https://example.com/ghost', 'desktop');
+
+      expect(metrics.cwvSource).toBe('none');
+      expect(metrics.isOriginFallback).toBe(false);
+      expect(metrics.lcpMs).toBeNull();
+      expect(metrics.cls).toBeNull();
+      expect(metrics.inpMs).toBeNull();
+    });
   });
 });

@@ -279,9 +279,9 @@ describe('AuthService', () => {
         const throttle = buildThrottle();
         const service = new AuthService(db, ENV, passwords, buildJwt(), throttle);
 
-        await expect(service.login('user@example.com', 'wrong', '203.0.113.7')).rejects.toBeInstanceOf(
-          InvalidCredentialsError,
-        );
+        await expect(
+          service.login('user@example.com', 'wrong', '203.0.113.7'),
+        ).rejects.toBeInstanceOf(InvalidCredentialsError);
         expect(throttle.record).toHaveBeenCalledWith('user@example.com', '203.0.113.7', false);
         expect(throttle.clearFailures).not.toHaveBeenCalled();
       });
@@ -303,7 +303,7 @@ describe('AuthService', () => {
         expect(throttle.record).toHaveBeenCalledWith('nobody@example.com', '203.0.113.9', false);
       });
 
-      it('records a SUCCESS and clears the email\'s prior failures on a correct password', async () => {
+      it("records a SUCCESS and clears the email's prior failures on a correct password", async () => {
         const { db } = buildDb({ lookupRows: [USER] });
         const passwords = buildPasswords({ verify: jest.fn().mockResolvedValue(true) });
         const throttle = buildThrottle();
@@ -362,7 +362,10 @@ describe('AuthService', () => {
         role: USER.role,
         tv: USER.tokenVersion,
       });
-      expect(pair).toEqual({ accessToken: 'signed.access.token', refreshToken: expect.any(String) });
+      expect(pair).toEqual({
+        accessToken: 'signed.access.token',
+        refreshToken: expect.any(String),
+      });
     });
 
     it('hashes the presented token before the lookup (never queries by the raw token)', async () => {
@@ -425,7 +428,7 @@ describe('AuthService', () => {
     });
   });
 
-  describe('logout (A5 — revoke the caller\'s sessions)', () => {
+  describe("logout (A5 — revoke the caller's sessions)", () => {
     it('issues the revoke-all update for the user and resolves void', async () => {
       const { db, update, set, updateWhere } = buildDb({ lookupRows: [] });
       const service = new AuthService(db, ENV, buildPasswords(), buildJwt(), buildThrottle());
@@ -457,7 +460,7 @@ describe('AuthService', () => {
   });
 
   describe('revokeAllSessions (A5 — mass-revoke primitive)', () => {
-    it('bumps tokenVersion AND revokes the user\'s active refresh tokens', async () => {
+    it("bumps tokenVersion AND revokes the user's active refresh tokens", async () => {
       const { db, update, set } = buildDb({ lookupRows: [] });
       const service = new AuthService(db, ENV, buildPasswords(), buildJwt(), buildThrottle());
 

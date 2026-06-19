@@ -200,4 +200,57 @@ describe('AuditRepository', () => {
       await expect(repo.assertExists('missing')).rejects.toThrow(/audit:create/);
     });
   });
+
+  // ── Item 14: setProgress ────────────────────────────────────────────────────
+  describe('setProgress (Item 14)', () => {
+    function mockUpdateDb() {
+      const where = jest.fn().mockResolvedValue(undefined);
+      const set = jest.fn().mockReturnValue({ where });
+      const update = jest.fn().mockReturnValue({ set });
+      const db = { update } as unknown as Database;
+      return { db, set };
+    }
+
+    it('writes progress jsonb { stage, startedAt } and bumps updatedAt', async () => {
+      const { db, set } = mockUpdateDb();
+      const repo = new AuditRepository(db);
+
+      await repo.setProgress('abc', 'perf');
+
+      expect(set).toHaveBeenCalledTimes(1);
+      const arg = set.mock.calls[0][0] as {
+        progress: { stage: string; startedAt: string };
+        updatedAt: Date;
+      };
+      expect(arg.progress.stage).toBe('perf');
+      expect(typeof arg.progress.startedAt).toBe('string');
+      // startedAt should be a valid ISO string.
+      expect(() => new Date(arg.progress.startedAt)).not.toThrow();
+      expect(arg.updatedAt).toBeInstanceOf(Date);
+    });
+  });
+
+  // ── Item 12: setCoverage ────────────────────────────────────────────────────
+  describe('setCoverage (Item 12)', () => {
+    function mockUpdateDb() {
+      const where = jest.fn().mockResolvedValue(undefined);
+      const set = jest.fn().mockReturnValue({ where });
+      const update = jest.fn().mockReturnValue({ set });
+      const db = { update } as unknown as Database;
+      return { db, set };
+    }
+
+    it('persists the coverage manifest to audits.coverage and bumps updatedAt', async () => {
+      const { db, set } = mockUpdateDb();
+      const repo = new AuditRepository(db);
+
+      const manifest = { pagesCrawled: 42, crawlCap: 500, capHit: false };
+      await repo.setCoverage('abc', manifest);
+
+      expect(set).toHaveBeenCalledTimes(1);
+      const arg = set.mock.calls[0][0] as { coverage: Record<string, unknown>; updatedAt: Date };
+      expect(arg.coverage).toBe(manifest);
+      expect(arg.updatedAt).toBeInstanceOf(Date);
+    });
+  });
 });

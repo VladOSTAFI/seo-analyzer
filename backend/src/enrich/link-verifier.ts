@@ -3,6 +3,7 @@ import { sql } from 'drizzle-orm';
 import { ENV } from '../config/config.module';
 import type { Env } from '../config/env.validation';
 import { DB, type Database } from '../db/db.types';
+import { applyBudget } from './url-budget';
 
 /**
  * Outcome of re-fetching one distinct target URL.
@@ -35,11 +36,30 @@ export interface VerifyPassResult {
   verifyInconclusive: number;
 }
 
+/** Counts returned by the external-link probe pass. */
+export interface ExternalProbeResult {
+  /** Distinct external hrefs probed. */
+  externalsVerified: number;
+  /** Whether the probe set was capped before all candidates were exhausted. */
+  truncated: boolean;
+}
+
+/** Counts returned by the image probe pass. */
+export interface ImageProbeResult {
+  /** Distinct image src URLs probed. */
+  imagesVerified: number;
+  /** Whether the probe set was capped before all candidates were exhausted. */
+  truncated: boolean;
+}
+
 const ZERO_RESULT: VerifyPassResult = {
   linksVerified: 0,
   falsePositivesCleared: 0,
   verifyInconclusive: 0,
 };
+
+const ZERO_EXTERNAL: ExternalProbeResult = { externalsVerified: 0, truncated: false };
+const ZERO_IMAGE: ImageProbeResult = { imagesVerified: 0, truncated: false };
 
 /**
  * Browser-like `Accept` header. Paired with the configured browser UA so that
@@ -109,6 +129,51 @@ export class LinkVerifierService {
       const reason = err instanceof Error ? err.message : String(err);
       this.logger.error(`Link verify pass errored (ignored) audit=${auditId}: ${reason}`);
       return { ...ZERO_RESULT };
+    }
+  }
+
+  /**
+   * Probe external links (type='external') whose `target_status_code` is still
+   * NULL (i.e. the crawl never visited them). Gated by EXTERNAL_VERIFY_ENABLED.
+   * Uses HEAD with GET fallback, bounded pool (LINK_VERIFY_CONCURRENCY / timeout),
+   * per-host budget (EXTERNAL_VERIFY_PER_HOST), and global cap (EXTERNAL_VERIFY_MAX).
+   *
+   * Best-effort: always resolves, never throws.
+   */
+  async probeExternalLinks(auditId: string): Promise<ExternalProbeResult> {
+    if (!this.env.EXTERNAL_VERIFY_ENABLED) {
+      this.logger.log(`External probe disabled (EXTERNAL_VERIFY_ENABLED=false) audit=${auditId}`);
+      return { ...ZERO_EXTERNAL };
+    }
+
+    try {
+      return await this.runExternalPass(auditId);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      this.logger.error(`External probe pass errored (ignored) audit=${auditId}: ${reason}`);
+      return { ...ZERO_EXTERNAL };
+    }
+  }
+
+  /**
+   * Probe image src URLs whose `status_code` is still NULL (never matched a
+   * crawled page in the set-based resolution). Gated by IMAGE_VERIFY_ENABLED.
+   * Same pool/budget/cap as the external probe pass.
+   *
+   * Best-effort: always resolves, never throws.
+   */
+  async probeImages(auditId: string): Promise<ImageProbeResult> {
+    if (!this.env.IMAGE_VERIFY_ENABLED) {
+      this.logger.log(`Image probe disabled (IMAGE_VERIFY_ENABLED=false) audit=${auditId}`);
+      return { ...ZERO_IMAGE };
+    }
+
+    try {
+      return await this.runImagePass(auditId);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      this.logger.error(`Image probe pass errored (ignored) audit=${auditId}: ${reason}`);
+      return { ...ZERO_IMAGE };
     }
   }
 
@@ -185,6 +250,146 @@ export class LinkVerifierService {
   }
 
   /**
+   * Inner external-link probe: SELECT distinct unprobed external hrefs, apply
+   * per-host and total budget caps, HEAD+GET-fallback fetch, UPDATE results.
+   */
+  private async runExternalPass(auditId: string): Promise<ExternalProbeResult> {
+    const startedAt = Date.now();
+    const max = this.env.EXTERNAL_VERIFY_MAX;
+    const perHost = this.env.EXTERNAL_VERIFY_PER_HOST;
+
+    // Fetch one extra beyond the hard cap so we can detect truncation.
+    const rows = (
+      await this.db.execute(sql`
+        select distinct href
+        from links
+        where audit_id = ${auditId}
+          and type = 'external'
+          and target_status_code is null
+        order by href
+        limit ${max + 1}
+      `)
+    ).rows as { href: string }[];
+
+    const httpOnly = rows.map((r) => r.href).filter((h) => this.isHttpUrl(h));
+    const skippedNonHttp = rows.length - httpOnly.length;
+    if (skippedNonHttp > 0) {
+      this.logger.log(
+        `External probe skipping ${skippedNonHttp} non-http(s) href(s) audit=${auditId}`,
+      );
+    }
+
+    if (httpOnly.length === 0) {
+      this.logger.log(`External probe: no unprobed external links found audit=${auditId}`);
+      return { ...ZERO_EXTERNAL };
+    }
+
+    const budget = applyBudget(httpOnly, perHost, max);
+    if (budget.perHostTruncated || budget.totalTruncated) {
+      this.logger.warn(
+        `External probe budget applied: perHostTruncated=${budget.perHostTruncated} ` +
+          `totalTruncated=${budget.totalTruncated} remaining=${budget.urls.length} audit=${auditId}`,
+      );
+    }
+
+    this.logger.log(
+      `External probe start audit=${auditId} distinct_targets=${budget.urls.length} ` +
+        `concurrency=${this.env.LINK_VERIFY_CONCURRENCY} timeoutMs=${this.env.LINK_VERIFY_TIMEOUT_MS}`,
+    );
+
+    const probed = await this.fetchAllStatuses(budget.urls);
+
+    for (const { href, status, broken } of probed) {
+      await this.db.execute(sql`
+        update links
+        set target_status_code = ${status},
+            is_broken = ${broken}
+        where audit_id = ${auditId}
+          and href = ${href}
+          and type = 'external'
+      `);
+    }
+
+    const elapsedMs = Date.now() - startedAt;
+    this.logger.log(
+      `External probe done audit=${auditId} probed=${probed.length} ` +
+        `truncated=${budget.perHostTruncated || budget.totalTruncated} durationMs=${elapsedMs}`,
+    );
+
+    return {
+      externalsVerified: probed.length,
+      truncated: budget.perHostTruncated || budget.totalTruncated,
+    };
+  }
+
+  /**
+   * Inner image probe: SELECT distinct unprobed image srcs, apply budget caps,
+   * HEAD+GET-fallback fetch, UPDATE images.status_code.
+   */
+  private async runImagePass(auditId: string): Promise<ImageProbeResult> {
+    const startedAt = Date.now();
+    const max = this.env.EXTERNAL_VERIFY_MAX;
+    const perHost = this.env.EXTERNAL_VERIFY_PER_HOST;
+
+    const rows = (
+      await this.db.execute(sql`
+        select distinct src
+        from images
+        where audit_id = ${auditId}
+          and status_code is null
+        order by src
+        limit ${max + 1}
+      `)
+    ).rows as { src: string }[];
+
+    const httpOnly = rows.map((r) => r.src).filter((h) => this.isHttpUrl(h));
+    const skippedNonHttp = rows.length - httpOnly.length;
+    if (skippedNonHttp > 0) {
+      this.logger.log(`Image probe skipping ${skippedNonHttp} non-http(s) src(s) audit=${auditId}`);
+    }
+
+    if (httpOnly.length === 0) {
+      this.logger.log(`Image probe: no unprobed image srcs found audit=${auditId}`);
+      return { ...ZERO_IMAGE };
+    }
+
+    const budget = applyBudget(httpOnly, perHost, max);
+    if (budget.perHostTruncated || budget.totalTruncated) {
+      this.logger.warn(
+        `Image probe budget applied: perHostTruncated=${budget.perHostTruncated} ` +
+          `totalTruncated=${budget.totalTruncated} remaining=${budget.urls.length} audit=${auditId}`,
+      );
+    }
+
+    this.logger.log(
+      `Image probe start audit=${auditId} distinct_srcs=${budget.urls.length} ` +
+        `concurrency=${this.env.LINK_VERIFY_CONCURRENCY} timeoutMs=${this.env.LINK_VERIFY_TIMEOUT_MS}`,
+    );
+
+    const probed = await this.fetchAllStatuses(budget.urls);
+
+    for (const { href, status } of probed) {
+      await this.db.execute(sql`
+        update images
+        set status_code = ${status}
+        where audit_id = ${auditId}
+          and src = ${href}
+      `);
+    }
+
+    const elapsedMs = Date.now() - startedAt;
+    this.logger.log(
+      `Image probe done audit=${auditId} probed=${probed.length} ` +
+        `truncated=${budget.perHostTruncated || budget.totalTruncated} durationMs=${elapsedMs}`,
+    );
+
+    return {
+      imagesVerified: probed.length,
+      truncated: budget.perHostTruncated || budget.totalTruncated,
+    };
+  }
+
+  /**
    * Persist one re-check result for ALL links rows sharing this href.
    *
    * - healthy ⇒ false positive: clear `is_broken`, record the fresh status, set
@@ -236,6 +441,37 @@ export class LinkVerifierService {
   }
 
   /**
+   * Probe a list of URLs (HEAD with GET fallback) using the bounded pool and
+   * return `{ href, status, broken }` for each. Used by external-link and image
+   * probe passes. A fetch failure is recorded as `status=0, broken=true`.
+   */
+  private async fetchAllStatuses(
+    urls: string[],
+  ): Promise<{ href: string; status: number; broken: boolean }[]> {
+    const results: { href: string; status: number; broken: boolean }[] = new Array(urls.length);
+    const poolSize = Math.max(1, Math.min(this.env.LINK_VERIFY_CONCURRENCY, urls.length));
+    let next = 0;
+
+    const worker = async (): Promise<void> => {
+      for (;;) {
+        const idx = next++;
+        if (idx >= urls.length) return;
+        const href = urls[idx];
+        try {
+          const status = await this.fetchStatusHeadGet(href);
+          results[idx] = { href, status, broken: status >= 400 };
+        } catch {
+          // Network error / timeout → mark broken (status 0 as sentinel).
+          results[idx] = { href, status: 0, broken: true };
+        }
+      }
+    };
+
+    await Promise.all(Array.from({ length: poolSize }, () => worker()));
+    return results;
+  }
+
+  /**
    * Re-fetch a single URL and classify it. Tries GET (some origins 5xx on HEAD).
    * A couple of retries with small linear backoff cover transient errors; only a
    * truly failed fetch (after retries) is `inconclusive`. A 4xx/5xx HTTP response
@@ -264,6 +500,43 @@ export class LinkVerifierService {
     const reason = lastError instanceof Error ? lastError.message : String(lastError);
     this.logger.debug?.(`Link verify inconclusive href=${href}: ${reason}`);
     return { href, outcome: 'inconclusive', finalStatus: null, isRedirect: false };
+  }
+
+  /**
+   * HEAD with GET fallback for the external/image probe passes. Some origins
+   * return 405/501 for HEAD — fall back to GET in those cases. Returns the final
+   * HTTP status (or throws on network error/timeout).
+   */
+  private async fetchStatusHeadGet(href: string): Promise<number> {
+    const headStatus = await this.fetchStatusMethod(href, 'HEAD');
+    if (headStatus === 405 || headStatus === 501) {
+      return this.fetchStatusMethod(href, 'GET');
+    }
+    return headStatus;
+  }
+
+  /**
+   * One HTTP request with a browser UA, following redirects, bounded by a
+   * per-request AbortSignal timeout. Returns the final numeric status.
+   * Drains/cancels the body (we only need the status line). Throws on network
+   * error / timeout.
+   */
+  private async fetchStatusMethod(href: string, method: 'HEAD' | 'GET'): Promise<number> {
+    const response = await fetch(href, {
+      method,
+      redirect: 'follow',
+      signal: AbortSignal.timeout(this.env.LINK_VERIFY_TIMEOUT_MS),
+      headers: {
+        'User-Agent': this.env.LINK_VERIFY_USER_AGENT,
+        Accept: ACCEPT_HEADER,
+      },
+    });
+    try {
+      await response.body?.cancel();
+    } catch {
+      // ignore — best-effort cleanup
+    }
+    return response.status;
   }
 
   /**

@@ -47,7 +47,16 @@ import { imageBrokenRule } from './rules/image/broken.rule';
 import { perfLcpRule } from './rules/perf/lcp.rule';
 import { perfClsInpRule } from './rules/perf/cls-inp.rule';
 import { perfPsiUsabilityRule } from './rules/perf/psi-usability.rule';
-import { perfMobileIndexingRule } from './rules/perf/mobile-indexing.rule';
+import { perfLabScoreRule } from './rules/perf/lab-score.rule';
+
+// Item 6: `links.external-flag` is opt-in (very noisy at low severity).
+// Enable by setting RULE_EXTERNAL_FLAG_ENABLED=true|1|yes|on (case-insensitive).
+const _externalFlagRaw = (process.env.RULE_EXTERNAL_FLAG_ENABLED ?? '').toLowerCase().trim();
+const externalFlagEnabled =
+  _externalFlagRaw === 'true' ||
+  _externalFlagRaw === '1' ||
+  _externalFlagRaw === 'yes' ||
+  _externalFlagRaw === 'on';
 
 /**
  * The complete, ordered set of audit rules run by {@link import('./analyze.service').AnalyzeService}.
@@ -59,6 +68,10 @@ import { perfMobileIndexingRule } from './rules/perf/mobile-indexing.rule';
  *
  * Every `id` MUST be unique (it is the stable `findings.ruleId` key and the
  * report sheet key); a duplicate-id guard test enforces that invariant.
+ *
+ * Conditional rules:
+ *   - `links.external-flag` — only included when `RULE_EXTERNAL_FLAG_ENABLED`
+ *     is truthy (default OFF). See Item 6.
  */
 export const RULES: Rule[] = [
   // mirror.*
@@ -70,7 +83,7 @@ export const RULES: Rule[] = [
   linksRedirectChainRule,
   linksBrokenInternalRule,
   linksBrokenExternalRule,
-  linksExternalFlagRule,
+  ...(externalFlagEnabled ? [linksExternalFlagRule] : []),
 
   // meta.*
   metaTitleMissingRule,
@@ -108,5 +121,5 @@ export const RULES: Rule[] = [
   perfLcpRule,
   perfClsInpRule,
   perfPsiUsabilityRule,
-  perfMobileIndexingRule,
+  perfLabScoreRule,
 ];

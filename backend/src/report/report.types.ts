@@ -1,4 +1,4 @@
-import type { Severity } from '../analyze/rule.types';
+import type { Confidence, Severity } from '../analyze/rule.types';
 
 /**
  * Phase 5 report contract — the FROZEN seam between the rendering engine
@@ -44,10 +44,16 @@ export interface SheetSpec {
  * A finding as loaded from the DB for reporting. `detail` is the jsonb column
  * already parsed into a plain object; the section builders read the rule-family
  * specific keys out of it (see each rule's `run` projection).
+ *
+ * `confidence` reflects how directly the signal was measured: `high` = directly
+ * observed (default); `medium`/`low` = estimated or unverified (origin-level
+ * CrUX, un-probed external links). Defaults to `'high'` when the DB column is
+ * NULL (pre-migration rows).
  */
 export interface FindingRow {
   ruleId: string;
   severity: Severity;
+  confidence: Confidence;
   url: string | null;
   detail: Record<string, unknown>;
 }
@@ -88,17 +94,48 @@ export interface ReportSection {
 }
 
 /**
+ * Coverage manifest assembled at the end of runAll (Item 12). Documents what
+ * was assessed vs. skipped/absent so silent gaps become explicit statements.
+ *
+ * Persisted to `audits.coverage` (jsonb) and surfaced on the API detail DTO.
+ */
+export interface CoverageManifest {
+  /** Total pages crawled in this run. */
+  pagesCrawled: number;
+  /** The configured crawl page cap. */
+  crawlCap: number;
+  /** Whether the crawl hit the cap (pages === crawlCap). */
+  capHit: boolean;
+  /** External link counts (crawled vs. verified by live HTTP probe). */
+  externalLinks: { total: number; verified: number };
+  /** Image counts (total crawled vs. status-enriched). */
+  images: { total: number; statusEnriched: number };
+  /** How many CWV data points came from each source. */
+  cwvSource: { field: number; originFallback: number; lab: number };
+  /**
+   * Rule IDs from the full registry that produced ZERO findings — meaning either
+   * the site is clean for that rule, or the rule did not have sufficient data
+   * to fire (e.g. hreflang on a monolingual site).
+   */
+  rulesInert: string[];
+}
+
+/**
  * Result of one {@link import('./report.service').ReportService.generate} run —
  * surfaced for structured logging and the `audit:report` CLI summary line.
  *
  * `reportPath` is the written `.xlsx` path (also persisted to
  * `audits.reportPath`); `sheets` counts the worksheets emitted; `totalFindings`
  * is the number of findings rendered; `bySeverity` is zero-filled across every
- * severity key so the summary always has every key present.
+ * severity key so the summary always has every key present; `distinctIssues`
+ * is the de-duplicated issue count (Item 13) that collapses H1 sub-rules and
+ * site-level perf rollups.
  */
 export interface ReportSummary {
   reportPath: string;
   sheets: number;
   totalFindings: number;
   bySeverity: Record<Severity, number>;
+  /** De-duplicated issue count (unique ruleFamily × url pairs). */
+  distinctIssues: number;
 }

@@ -10,7 +10,7 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import { audits } from './audits';
-import { crawlSource, statusClass } from './enums';
+import { crawlSource, pageKind, statusClass } from './enums';
 
 /**
  * Core crawl output (Phase 1) — one row per crawled URL.
@@ -40,6 +40,11 @@ export const pages = pgTable(
     contentLengthBytes: integer('content_length_bytes'),
     depth: integer('depth').notNull().default(0),
     crawlSource: crawlSource('crawl_source').notNull().default('link'),
+    // Resource classification, set at crawl-persist time from content_type +
+    // crawl_source. Rules filter on `page_kind = 'html'` so non-content rows
+    // (sitemap/feed) are never analyzed as HTML pages. Defaults to 'html' so
+    // pre-existing rows keep their prior (HTML-only) behavior until backfilled.
+    pageKind: pageKind('page_kind').notNull().default('html'),
 
     // metadata (arrays detect missing/duplicate/multiple)
     title: jsonb('title').$type<string[]>().notNull().default([]),
