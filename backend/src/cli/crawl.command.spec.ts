@@ -30,7 +30,7 @@ describe('CrawlCommand.run', () => {
   }
 
   it('runs the crawl and prints a summary line to stdout', async () => {
-    const summary: CrawlSummary = { pages: 3, links: 7, images: 2, hreflang: 1 };
+    const summary: CrawlSummary = { pages: 3, links: 7, images: 2, hreflang: 1, structuredData: 0 };
     const { service, crawl } = makeCrawl(summary);
     const command = new CrawlCommand(service);
     const writeSpy = jest.spyOn(process.stdout, 'write').mockReturnValue(true);
@@ -44,7 +44,7 @@ describe('CrawlCommand.run', () => {
   });
 
   it('rejects a malformed id before touching the service', async () => {
-    const { service, crawl } = makeCrawl({ pages: 0, links: 0, images: 0, hreflang: 0 });
+    const { service, crawl } = makeCrawl({ pages: 0, links: 0, images: 0, hreflang: 0, structuredData: 0 });
     const command = new CrawlCommand(service);
 
     await expect(command.run(['bad'], {})).rejects.toBeInstanceOf(InvalidArgumentError);

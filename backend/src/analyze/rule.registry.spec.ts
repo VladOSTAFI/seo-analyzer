@@ -37,14 +37,14 @@ describe('rule.registry', () => {
   });
 
   describe('baseline rule count', () => {
-    it('has 36 rules by default (RULE_EXTERNAL_FLAG_ENABLED off)', () => {
+    it('has 64 rules by default (RULE_EXTERNAL_FLAG_ENABLED off)', () => {
       const { RULES } = loadRegistry(undefined);
-      expect(RULES).toHaveLength(36);
+      expect(RULES).toHaveLength(64);
     });
 
-    it('has 37 rules when RULE_EXTERNAL_FLAG_ENABLED=true', () => {
+    it('has 65 rules when RULE_EXTERNAL_FLAG_ENABLED=true', () => {
       const { RULES } = loadRegistry('true');
-      expect(RULES).toHaveLength(37);
+      expect(RULES).toHaveLength(65);
     });
   });
 

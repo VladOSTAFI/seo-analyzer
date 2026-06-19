@@ -52,6 +52,21 @@ export const pages = pgTable(
     h1: jsonb('h1').$type<string[]>().notNull().default([]),
     h2: jsonb('h2').$type<string[]>().notNull().default([]),
 
+    // social metadata (Open Graph + Twitter Card). Nullable: absent → null =
+    // "no social metadata". Pre-existing rows are NULL until a re-crawl backfills.
+    ogData: jsonb('og_data').$type<{
+      ogTitle: string | null;
+      ogDescription: string | null;
+      ogImage: string | null;
+      ogUrl: string | null;
+      ogType: string | null;
+      ogSiteName: string | null;
+      twitterCard: string | null;
+      twitterTitle: string | null;
+      twitterDescription: string | null;
+      twitterImage: string | null;
+    } | null>(),
+
     // indexability
     canonicalUrl: text('canonical_url'),
     isSelfCanonical: boolean('is_self_canonical'),
@@ -65,6 +80,35 @@ export const pages = pgTable(
 
     // dup detection
     contentHash: text('content_hash'),
+
+    // ── Feature 08 (content semantics). All nullable/defaulted, backfill-safe.
+    //   `htmlLang`/`charset`/`hasViewport` are the SHARED columns also read by
+    //   feature 11 — defined ONCE here (08 owns them) to avoid a duplicate
+    //   migration. ──────────────────────────────────────────────────────────
+    wordCount: integer('word_count'), // visible-text word count
+    htmlBytes: integer('html_bytes'), // raw HTML length, for content-to-code ratio
+    htmlLang: text('html_lang'), // <html lang>, null if absent
+    charset: text('charset'), // detected charset, null if absent
+    hasViewport: boolean('has_viewport').default(false),
+    headingsOutline: jsonb('headings_outline')
+      .$type<{ level: number; text: string }[]>()
+      .default([]),
+    contentSimhash: text('content_simhash'), // 64-bit SimHash as a 64-char bit string; null if no body
+    titlePx: integer('title_px'), // estimated SERP pixel width of title->>0
+    descPx: integer('desc_px'), // estimated SERP pixel width of meta_description->>0
+
+    // ── Feature 11 (HTTPS / security headers / mobile usability). Additive
+    //   only; READS feature-08's htmlLang/charset/hasViewport above. ──────────
+    viewportContent: text('viewport_content'), // raw <meta name=viewport> content attr; null = absent
+    hsts: text('hsts'), // Strict-Transport-Security header value; null = absent
+    cspPresent: boolean('csp_present').notNull().default(false), // Content-Security-Policy header present
+    xContentTypeOptions: text('x_content_type_options'), // X-Content-Type-Options header value
+    // Static mobile-usability heuristic hits (tiny inline fonts / fixed-width
+    // overflow); medium-confidence estimate until the render path lands.
+    mobileUsabilityIssues: jsonb('mobile_usability_issues').$type<string[]>().default([]),
+    // Cert columns — set by the best-effort enrich TLS probe (gated). null = not checked.
+    certValid: boolean('cert_valid'),
+    certDaysToExpiry: integer('cert_days_to_expiry'),
 
     // enrichment (filled Phase 2)
     inlinkCount: integer('inlink_count').default(0),

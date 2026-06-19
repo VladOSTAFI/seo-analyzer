@@ -5,12 +5,13 @@ import {
   Configuration,
   type Request as CrawleeRequest,
 } from 'crawlee';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { classifyLink, normalizeUrl, resolveUrl } from '../common/url.util';
 import { ENV } from '../config/config.module';
 import type { Env } from '../config/env.validation';
 import { DB, type Database } from '../db/db.types';
 import {
+  audits,
   hreflangEntries,
   images,
   links,
@@ -18,10 +19,19 @@ import {
   type NewImage,
   type NewLink,
   type NewPage,
+  type NewSitemapEntry,
+  type NewStructuredData,
   pages,
+  type RobotsAudit,
+  type SitemapAudit,
+  sitemapEntries,
+  structuredData,
 } from '../db/schema';
+import { pageResources, type NewPageResource } from '../db/schema/page-resources';
 import { AuditRepository } from '../audit/audit.repository';
 import { ExtractService } from './extract.service';
+import { RobotsService } from './robots.service';
+import { SitemapService } from './sitemap.service';
 import type { CrawlSummary, ExtractInput, ExtractedPage } from './crawl.types';
 
 /** A single redirect hop recorded for a crawled page. */
@@ -187,6 +197,23 @@ export function toPageRow(auditId: string, collected: CollectedPage): NewPage {
     relNext: extracted.relNext,
     relPrev: extracted.relPrev,
     contentHash: extracted.contentHash,
+    ogData: extracted.ogData ?? null,
+    // Feature 08 content semantics.
+    wordCount: extracted.wordCount,
+    htmlBytes: extracted.htmlBytes,
+    htmlLang: extracted.htmlLang,
+    charset: extracted.charset,
+    hasViewport: extracted.hasViewport,
+    headingsOutline: extracted.headingsOutline,
+    contentSimhash: extracted.contentSimhash,
+    titlePx: extracted.titlePx,
+    descPx: extracted.descPx,
+    // Feature 11 security headers + mobile usability.
+    viewportContent: extracted.security.viewportContent,
+    hsts: extracted.security.hsts,
+    cspPresent: extracted.security.cspPresent,
+    xContentTypeOptions: extracted.security.xContentTypeOptions,
+    mobileUsabilityIssues: extracted.security.mobileUsabilityIssues,
   };
 }
 
@@ -203,6 +230,8 @@ export function toLinkRows(auditId: string, collected: CollectedPage): NewLink[]
     anchorText: link.anchorText,
     type: link.type,
     rel: link.rel,
+    anchorIsBareImage: link.anchorIsBareImage,
+    imageAltMissing: link.imageAltMissing,
   }));
 }
 
@@ -215,7 +244,54 @@ export function toImageRows(auditId: string, collected: CollectedPage): NewImage
     src: img.src,
     alt: img.alt,
     title: img.title,
+    width: img.width,
+    height: img.height,
+    loading: img.loading,
+    hasSrcset: img.hasSrcset,
+    hasSizes: img.hasSizes,
   }));
+}
+
+/**
+ * Map extracted images into `page_resources` insert rows (kind='image').
+ * The byte-weight + format + status columns are left NULL here — they are
+ * populated best-effort by the image probe pass (feature 09). `is_https` is the
+ * scheme of the resolved src, used by the feature-11 mixed-content rule. Deduped
+ * by distinct `(page_url, src)` per page so the probe has one row per resource.
+ * Pure + exported for unit testing.
+ */
+export function toPageResourceRows(auditId: string, collected: CollectedPage): NewPageResource[] {
+  const pageUrl = collected.meta.finalUrl;
+  const seen = new Set<string>();
+  const rows: NewPageResource[] = [];
+  for (const img of collected.extracted.images) {
+    const key = `image ${img.src}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    rows.push({
+      auditId,
+      pageUrl,
+      src: img.src,
+      kind: 'image',
+      isHttps: img.src.startsWith('https://'),
+    });
+  }
+  // Feature 11: non-image sub-resources (script/style/font/other) for the
+  // mixed-content scan. Deduped per distinct (kind, src) — images stay
+  // authoritative in the `images` table; these are the security-scan mirror.
+  for (const res of collected.extracted.resources) {
+    const key = `${res.kind} ${res.src}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    rows.push({
+      auditId,
+      pageUrl,
+      src: res.src,
+      kind: res.kind,
+      isHttps: res.isHttps,
+    });
+  }
+  return rows;
 }
 
 /** Map extracted hreflang alternates into `hreflang_entries` insert rows. Pure + exported. */
@@ -226,6 +302,25 @@ export function toHreflangRows(auditId: string, collected: CollectedPage): NewHr
     pageUrl,
     lang: h.lang,
     href: h.href,
+  }));
+}
+
+/**
+ * Map extracted JSON-LD nodes into `structured_data` insert rows. The extractor
+ * already ran the validator in place, so `valid`/`errors` are final here; the
+ * transient parsed `node` is dropped. Pure + exported for unit testing.
+ */
+export function toStructuredDataRows(
+  auditId: string,
+  collected: CollectedPage,
+): NewStructuredData[] {
+  const pageUrl = collected.meta.finalUrl;
+  return collected.extracted.structuredData.map((sd) => ({
+    auditId,
+    pageUrl,
+    type: sd.type,
+    valid: sd.valid,
+    errors: sd.errors,
   }));
 }
 
@@ -263,30 +358,38 @@ export class CrawlService {
   constructor(
     @Inject(DB) private readonly db: Database,
     @Inject(ENV) private readonly env: Env,
-    private readonly audits: AuditRepository,
+    private readonly auditsRepo: AuditRepository,
     private readonly extract: ExtractService,
+    private readonly robots: RobotsService,
+    private readonly sitemap: SitemapService,
   ) {}
 
   async crawl(auditId: string): Promise<CrawlSummary> {
     const startedAt = Date.now();
-    const audit = await this.audits.assertExists(auditId);
+    const audit = await this.auditsRepo.assertExists(auditId);
     const startUrl = audit.startUrl;
 
-    await this.audits.setStatus(auditId, 'crawling');
+    await this.auditsRepo.setStatus(auditId, 'crawling');
     this.logger.log(`Crawl start audit=${auditId} startUrl=${startUrl}`);
 
     try {
       const collected = await this.runCrawler(startUrl);
       const summary = await this.persist(auditId, collected);
+
+      // Best-effort discovery pass (features 02/03): robots.txt → sitemap.
+      // Runs AFTER persist so the sitemap diff has `pages` to join. Never throws.
+      await this.runDiscovery(auditId, startUrl, collected);
+
       const elapsedMs = Date.now() - startedAt;
       this.logger.log(
         `Crawl done audit=${auditId} pages=${summary.pages} links=${summary.links} ` +
-          `images=${summary.images} hreflang=${summary.hreflang} durationMs=${elapsedMs}`,
+          `images=${summary.images} hreflang=${summary.hreflang} ` +
+          `structuredData=${summary.structuredData} durationMs=${elapsedMs}`,
       );
       // Status stays at `crawling` on success — enrich owns the next transition.
       return summary;
     } catch (err) {
-      await this.audits.markFailed(auditId, 'crawl');
+      await this.auditsRepo.markFailed(auditId, 'crawl');
       const reason = err instanceof Error ? err.message : String(err);
       this.logger.error(`Crawl failed audit=${auditId} stage=crawl: ${reason}`);
       throw err;
@@ -545,12 +648,16 @@ export class CrawlService {
     const linkRows = deduped.flatMap((c) => toLinkRows(auditId, c));
     const imageRows = deduped.flatMap((c) => toImageRows(auditId, c));
     const hreflangRows = deduped.flatMap((c) => toHreflangRows(auditId, c));
+    const structuredDataRows = deduped.flatMap((c) => toStructuredDataRows(auditId, c));
+    const pageResourceRows = deduped.flatMap((c) => toPageResourceRows(auditId, c));
 
     await this.db.transaction(async (tx) => {
       await tx.delete(pages).where(eq(pages.auditId, auditId));
       await tx.delete(links).where(eq(links.auditId, auditId));
       await tx.delete(images).where(eq(images.auditId, auditId));
       await tx.delete(hreflangEntries).where(eq(hreflangEntries.auditId, auditId));
+      await tx.delete(structuredData).where(eq(structuredData.auditId, auditId));
+      await tx.delete(pageResources).where(eq(pageResources.auditId, auditId));
 
       for (const part of chunk(pageRows, INSERT_CHUNK_SIZE)) {
         if (part.length) await tx.insert(pages).values(part);
@@ -564,6 +671,12 @@ export class CrawlService {
       for (const part of chunk(hreflangRows, INSERT_CHUNK_SIZE)) {
         if (part.length) await tx.insert(hreflangEntries).values(part);
       }
+      for (const part of chunk(structuredDataRows, INSERT_CHUNK_SIZE)) {
+        if (part.length) await tx.insert(structuredData).values(part);
+      }
+      for (const part of chunk(pageResourceRows, INSERT_CHUNK_SIZE)) {
+        if (part.length) await tx.insert(pageResources).values(part);
+      }
     });
 
     return {
@@ -571,6 +684,84 @@ export class CrawlService {
       links: linkRows.length,
       images: imageRows.length,
       hreflang: hreflangRows.length,
+      structuredData: structuredDataRows.length,
     };
+  }
+
+  /**
+   * Best-effort discovery pass (features 02/03). robots.txt → declared Sitemap:
+   * URLs → SitemapService; persists both jsonb audits + sitemap_entries and
+   * computes the sitemap⨝pages diff with a single set-based UPDATE. Idempotent
+   * (delete-then-insert) and non-fatal: any failure is logged, never rethrown.
+   */
+  private async runDiscovery(
+    auditId: string,
+    startUrl: string,
+    collected: CollectedPage[],
+  ): Promise<void> {
+    try {
+      const origin = new URL(startUrl).origin;
+
+      // 1. robots.txt — intersect disallow prefixes with crawled page paths.
+      let robotsAudit: RobotsAudit | null = null;
+      let sitemapSeeds: string[] = [];
+      if (this.env.ROBOTS_AUDIT_ENABLED) {
+        const crawledPaths = collected
+          .map((c) => {
+            try {
+              return new URL(c.meta.finalUrl).pathname;
+            } catch {
+              return null;
+            }
+          })
+          .filter((p): p is string => p !== null);
+        robotsAudit = await this.robots.fetchAndParse(origin, crawledPaths);
+        sitemapSeeds = robotsAudit.sitemapUrls;
+        await this.db.update(audits).set({ robotsAudit }).where(eq(audits.id, auditId));
+      }
+
+      // 2. Sitemaps — directive-driven, /sitemap.xml fallback inside the service.
+      if (this.env.SITEMAP_AUDIT_ENABLED) {
+        const { audit: sitemapAudit, entries } = await this.sitemap.discover(origin, sitemapSeeds);
+        await this.db
+          .update(audits)
+          .set({ sitemapAudit: sitemapAudit as SitemapAudit })
+          .where(eq(audits.id, auditId));
+
+        const rows: NewSitemapEntry[] = entries.map((e) => ({
+          auditId,
+          loc: e.loc,
+          sourceSitemap: e.sourceSitemap,
+          lastmod: e.lastmod,
+          changefreq: e.changefreq,
+          priority: e.priority,
+        }));
+
+        await this.db.transaction(async (tx) => {
+          await tx.delete(sitemapEntries).where(eq(sitemapEntries.auditId, auditId));
+          for (const part of chunk(rows, INSERT_CHUNK_SIZE)) {
+            if (part.length) await tx.insert(sitemapEntries).values(part);
+          }
+          // Set-based diff: fill in_crawl/status_code/is_self_canonical/is_noindex
+          // from the matching pages row (normalized url join).
+          await tx.execute(sql`
+            update sitemap_entries se set
+              in_crawl = (p.url is not null),
+              status_code = p.status_code,
+              is_self_canonical = p.is_self_canonical,
+              is_noindex = (
+                coalesce(p.meta_robots ilike '%noindex%', false)
+                or coalesce(p.x_robots_tag ilike '%noindex%', false)
+              )
+            from (select ${auditId}::uuid as aid) k
+            left join pages p on p.audit_id = k.aid and p.url = se.loc
+            where se.audit_id = ${auditId}
+          `);
+        });
+      }
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`Discovery pass errored (ignored) audit=${auditId}: ${reason}`);
+    }
   }
 }

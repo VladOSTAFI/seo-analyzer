@@ -88,4 +88,42 @@ describe('links.anchor-quality (int)', () => {
     const hrefs = [...byHref.keys()].sort();
     expect(hrefs).toEqual(['https://t/ru', 'https://t/x', 'https://t/y', 'https://t/z']);
   });
+
+  it('flags image-link-missing-alt (medium) ahead of empty; bare-image WITH alt is not flagged', async () => {
+    await seedLinks(auditId, [
+      // bare-image link, wrapped <img> has NO alt → image-link-missing-alt (medium)
+      {
+        sourceUrl: 'https://t/a',
+        href: 'https://t/noalt',
+        type: 'internal',
+        anchorText: null,
+        anchorIsBareImage: true,
+        imageAltMissing: true,
+      },
+      // bare-image link, wrapped <img> HAS alt → not flagged (empty would not apply: bare image, but alt present)
+      {
+        sourceUrl: 'https://t/a',
+        href: 'https://t/withalt',
+        type: 'internal',
+        anchorText: null,
+        anchorIsBareImage: true,
+        imageAltMissing: false,
+      },
+    ]);
+
+    const findings = await runRule(linksAnchorQualityRule, auditId);
+    const byHref = new Map(findings.map((f) => [f.detail?.href as string, f]));
+
+    expect(byHref.get('https://t/noalt')).toMatchObject({
+      url: 'https://t/a',
+      severity: 'medium',
+      detail: { anchorIssue: 'image-link-missing-alt', anchorText: null },
+    });
+    // A bare-image link with empty anchor text but a present alt still classifies
+    // as `empty` (anchor_text is null) → medium. It is NOT image-link-missing-alt.
+    expect(byHref.get('https://t/withalt')).toMatchObject({
+      severity: 'medium',
+      detail: { anchorIssue: 'empty' },
+    });
+  });
 });

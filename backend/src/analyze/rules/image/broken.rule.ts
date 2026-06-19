@@ -6,14 +6,16 @@ import type { Finding, Rule } from '../../rule.types';
  *
  * Severity: medium.
  *
- * SQL mechanism: `images` where `status_code >= 400`, deduped by distinct
+ * SQL mechanism: an image is broken when its enriched status is >= 400 in EITHER
+ * source — the legacy `images.status_code` (set when an image src matched a
+ * crawled page, or by the image probe) OR the new `page_resources` image rows
+ * (populated by the feature-09 image probe, gated by IMAGE_VERIFY_ENABLED). The
+ * UNION+DISTINCT folds both so a broken image is reported once per
  * `(page_url, src, status_code)`.
  *
- * LIMITATION: enrichment (Phase 2) only set `images.status_code` when the
- * image's `src` matched a crawled `pages.url`, so this rule fires rarely today.
- * A live HTTP HEAD-check pass over every image src is the intended way to
- * surface broken images and is a deferred enhancement — this rule deliberately
- * makes NO network calls and reads only the enriched column.
+ * This rule makes NO network calls — it reads only the enriched columns. It is
+ * silent until the probe pass runs (IMAGE_VERIFY_ENABLED, default off), unless an
+ * image src happened to be crawled as a page.
  */
 export const imageBrokenRule: Rule = {
   id: 'image.broken',
@@ -22,9 +24,19 @@ export const imageBrokenRule: Rule = {
   async run(db, auditId) {
     const result = await db.execute(sql`
       select distinct page_url, src, status_code
-      from images
-      where audit_id = ${auditId}
-        and status_code >= 400
+      from (
+        select page_url, src, status_code
+        from images
+        where audit_id = ${auditId}
+          and status_code >= 400
+        union
+        select page_url, src, status_code
+        from page_resources
+        where audit_id = ${auditId}
+          and kind = 'image'
+          and status_code >= 400
+      ) broken
+      order by page_url, src
     `);
     return result.rows.map(
       (row): Finding => ({

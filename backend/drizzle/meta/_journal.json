@@ -71,6 +71,20 @@
       "when": 1781868395644,
       "tag": "0009_tan_skin",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1781874241912,
+      "tag": "0010_sticky_gwen_stacy",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1781877721421,
+      "tag": "0011_past_moon_knight",
+      "breakpoints": true
     }
   ]
 }

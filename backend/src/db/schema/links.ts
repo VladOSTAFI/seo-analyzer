@@ -14,6 +14,11 @@ import { linkType } from './enums';
 /**
  * Every outlink found during the crawl (Phase 1), enriched in Phase 2.
  * Drives redirect/broken-link/inlink analysis.
+ *
+ * Feature 10 adds two additive extraction-time booleans that power the
+ * `image-link-missing-alt` sub-case of `links.anchor-quality` without a
+ * cross-table join: `anchorIsBareImage` (the `<a>` wraps only an `<img>` with no
+ * text) and `imageAltMissing` (that wrapped `<img>` has no non-empty alt).
  */
 export const links = pgTable(
   'links',
@@ -28,6 +33,10 @@ export const links = pgTable(
     anchorText: text('anchor_text'),
     type: linkType('type').notNull(),
     rel: jsonb('rel').$type<string[]>().notNull().default([]),
+
+    // Static HTML signals (feature 10, extraction-time; additive).
+    anchorIsBareImage: boolean('anchor_is_bare_image').notNull().default(false),
+    imageAltMissing: boolean('image_alt_missing').notNull().default(false),
 
     // enrichment (Phase 2)
     targetStatusCode: integer('target_status_code'),

@@ -57,12 +57,20 @@ describe('distinctIssues / IssueGroup consistency', () => {
 });
 
 describe('score not-assessed categories ↔ coverage NOT ASSESSED rows', () => {
-  it('Structured Data is assessed:false and has a renderable label', () => {
+  it('Phase 2: with all rule families live, every category is assessed', () => {
     const score = computeScore([], 20, coverage(20));
     const notAssessed = CATEGORY_KEYS.filter((k) => !score.categories[k].assessed);
-    // In Phase 1 only Structured Data is not assessed.
-    expect(notAssessed).toEqual(['structuredData']);
-    // Every not-assessed key has a human label the Coverage sheet renders.
+    expect(notAssessed).toEqual([]);
+  });
+
+  it('a category whose rules are all inert becomes not-assessed and still has a renderable label', () => {
+    // Mark every schema.* rule inert → Structured Data has no live rule → not assessed.
+    // This pins the invariant that a NOT-ASSESSED category always has a label the
+    // Coverage sheet can render (the report.service builder uses the same labels).
+    const inert = ['schema.missing', 'schema.invalid', 'schema.incomplete', 'schema.localbusiness'];
+    const score = computeScore([], 20, { ...coverage(20), rulesInert: inert });
+    const notAssessed = CATEGORY_KEYS.filter((k) => !score.categories[k].assessed);
+    expect(notAssessed).toContain('structuredData');
     for (const k of notAssessed) {
       expect(typeof CATEGORY_LABELS[k]).toBe('string');
       expect(CATEGORY_LABELS[k].length).toBeGreaterThan(0);

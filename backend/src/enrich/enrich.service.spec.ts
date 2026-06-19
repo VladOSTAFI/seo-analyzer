@@ -115,6 +115,7 @@ function makeDeps(
     verifyBrokenLinks: jest.fn().mockResolvedValue(verify),
     probeExternalLinks: jest.fn().mockResolvedValue(externalProbe),
     probeImages: jest.fn().mockResolvedValue(imageProbe),
+    verifyCerts: jest.fn().mockResolvedValue({ hostsChecked: 0 }),
   } as unknown as jest.Mocked<LinkVerifierService>;
 
   return { db, dbExecute, tx, txExecute, transaction, auditRepo, linkVerifier, counts };

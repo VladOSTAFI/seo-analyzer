@@ -1,3 +1,4 @@
+import { connect as tlsConnect } from 'node:tls';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { sql } from 'drizzle-orm';
 import { ENV } from '../config/config.module';
@@ -60,6 +61,84 @@ const ZERO_RESULT: VerifyPassResult = {
 
 const ZERO_EXTERNAL: ExternalProbeResult = { externalsVerified: 0, truncated: false };
 const ZERO_IMAGE: ImageProbeResult = { imagesVerified: 0, truncated: false };
+
+/** Counts returned by the best-effort TLS cert probe pass (feature 11). */
+export interface CertProbeResult {
+  /** Distinct hosts whose certificate was checked. */
+  hostsChecked: number;
+}
+
+const ZERO_CERT: CertProbeResult = { hostsChecked: 0 };
+
+/** One host's TLS cert verdict. */
+interface CertVerdict {
+  /** Cert chain valid AND host matches (Node's authorized flag). */
+  valid: boolean;
+  /** Whole days until `notAfter` (negative when already expired); null unknown. */
+  daysToExpiry: number | null;
+}
+
+/**
+ * Stream-count cap (bytes) for the image probe when the origin sends no
+ * `Content-Length`. Read directly from the environment with a safe default so it
+ * works whether or not the validated Env type carries IMAGE_FETCH_MAX_BYTES yet
+ * (mirrors how the extractor / rules read their own env knobs). Positive int only.
+ */
+function readIntEnv(name: string, def: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return def;
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 ? n : def;
+}
+const IMAGE_FETCH_MAX_BYTES = readIntEnv('IMAGE_FETCH_MAX_BYTES', 5_000_000);
+
+/**
+ * Read a boolean env var (truthy spellings) with a default. Read from
+ * process.env directly so the cert gate works whether or not the validated Env
+ * type carries SECURITY_VERIFY_ENABLED yet (same discipline as readIntEnv above).
+ */
+function readBoolEnv(name: string, def: boolean): boolean {
+  const raw = (process.env[name] ?? '').trim().toLowerCase();
+  if (raw === '') return def;
+  return raw === 'true' || raw === '1' || raw === 'yes' || raw === 'on';
+}
+
+/** Probe outcome for one image src: live status + measured bytes/format. */
+interface ImageProbeRow {
+  href: string;
+  status: number;
+  /** Transfer/content bytes; null when neither header nor stream-count yielded a value. */
+  bytes: number | null;
+  /** Normalized format token ('webp'|'avif'|'jpeg'|'png'|'gif'|'svg'|...); null unknown. */
+  format: string | null;
+  /** Scheme of the resolved src (https → true). Drives the feature-11 mixed-content rule. */
+  isHttps: boolean;
+}
+
+/**
+ * Normalize a `Content-Type` header into a short format token. Falls back to the
+ * `src` file extension when the header is missing/ambiguous. Returns null when
+ * neither yields a recognizable image format.
+ */
+function deriveImageFormat(contentType: string | null, src: string): string | null {
+  const ct = (contentType ?? '').toLowerCase();
+  if (ct.includes('image/webp')) return 'webp';
+  if (ct.includes('image/avif')) return 'avif';
+  if (ct.includes('image/jpeg') || ct.includes('image/jpg')) return 'jpeg';
+  if (ct.includes('image/png')) return 'png';
+  if (ct.includes('image/gif')) return 'gif';
+  if (ct.includes('image/svg')) return 'svg';
+  // Fall back to the src extension (strip query/fragment first).
+  const path = src.split(/[?#]/)[0] ?? src;
+  const ext = path.includes('.') ? (path.split('.').pop() ?? '').toLowerCase() : '';
+  if (ext === 'webp') return 'webp';
+  if (ext === 'avif') return 'avif';
+  if (ext === 'jpg' || ext === 'jpeg') return 'jpeg';
+  if (ext === 'png') return 'png';
+  if (ext === 'gif') return 'gif';
+  if (ext === 'svg') return 'svg';
+  return null;
+}
 
 /**
  * Browser-like `Accept` header. Paired with the configured browser UA so that
@@ -175,6 +254,125 @@ export class LinkVerifierService {
       this.logger.error(`Image probe pass errored (ignored) audit=${auditId}: ${reason}`);
       return { ...ZERO_IMAGE };
     }
+  }
+
+  /**
+   * Best-effort TLS certificate probe (feature 11 `security.cert`). Gated by
+   * SECURITY_VERIFY_ENABLED (default OFF). One TLS connection per DISTINCT host
+   * across the audit's HTTPS pages; records `cert_valid` / `cert_days_to_expiry`
+   * onto every `pages` row for that host. Best-effort: always resolves, never
+   * throws — a cert probe failure must NEVER fail enrich.
+   */
+  async verifyCerts(auditId: string): Promise<CertProbeResult> {
+    if (!readBoolEnv('SECURITY_VERIFY_ENABLED', false)) {
+      this.logger.log(`Cert verify disabled (SECURITY_VERIFY_ENABLED=false) audit=${auditId}`);
+      return { ...ZERO_CERT };
+    }
+    try {
+      return await this.runCertPass(auditId);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      this.logger.error(`Cert verify pass errored (ignored) audit=${auditId}: ${reason}`);
+      return { ...ZERO_CERT };
+    }
+  }
+
+  /**
+   * Inner cert pass: SELECT distinct HTTPS hosts from the audit's HTML pages,
+   * probe each host's certificate once, and UPDATE the cert columns for every
+   * page on that host.
+   */
+  private async runCertPass(auditId: string): Promise<CertProbeResult> {
+    const startedAt = Date.now();
+    const rows = (
+      await this.db.execute(sql`
+        select distinct lower(coalesce(final_url, url)) as eff_url
+        from pages
+        where audit_id = ${auditId}
+          and page_kind = 'html'
+          and lower(coalesce(final_url, url)) like 'https://%'
+      `)
+    ).rows as { eff_url: string }[];
+
+    // Map distinct hosts → an example effective URL (host is what we probe).
+    const hosts = new Map<string, void>();
+    for (const r of rows) {
+      try {
+        hosts.set(new URL(r.eff_url).host, undefined);
+      } catch {
+        // skip unparseable
+      }
+    }
+    if (hosts.size === 0) {
+      this.logger.log(`Cert verify: no HTTPS hosts to check audit=${auditId}`);
+      return { ...ZERO_CERT };
+    }
+
+    let checked = 0;
+    for (const host of hosts.keys()) {
+      const verdict = await this.probeCert(host);
+      if (verdict === null) continue; // inconclusive — leave columns null
+      checked += 1;
+      await this.db.execute(sql`
+        update pages
+        set cert_valid = ${verdict.valid},
+            cert_days_to_expiry = ${verdict.daysToExpiry}
+        where audit_id = ${auditId}
+          and page_kind = 'html'
+          and lower(coalesce(final_url, url)) like ${`https://${host.toLowerCase()}%`}
+      `);
+    }
+
+    const elapsedMs = Date.now() - startedAt;
+    this.logger.log(
+      `Cert verify done audit=${auditId} hosts_checked=${checked} durationMs=${elapsedMs}`,
+    );
+    return { hostsChecked: checked };
+  }
+
+  /**
+   * One TLS connection to `host:443` (SNI), reading the peer certificate's
+   * validity + `notAfter`. Resolves to a {@link CertVerdict} or null when the
+   * connection failed (inconclusive). Bounded by LINK_VERIFY_TIMEOUT_MS. Never
+   * throws.
+   */
+  private probeCert(host: string): Promise<CertVerdict | null> {
+    const [hostname, portStr] = host.split(':');
+    const port = portStr && /^\d+$/.test(portStr) ? Number(portStr) : 443;
+    return new Promise<CertVerdict | null>((resolve) => {
+      let settled = false;
+      const done = (v: CertVerdict | null): void => {
+        if (settled) return;
+        settled = true;
+        try {
+          socket.destroy();
+        } catch {
+          // ignore
+        }
+        resolve(v);
+      };
+      const socket = tlsConnect(
+        { host: hostname, port, servername: hostname, timeout: this.env.LINK_VERIFY_TIMEOUT_MS },
+        () => {
+          try {
+            const cert = socket.getPeerCertificate();
+            const valid = socket.authorized === true;
+            let daysToExpiry: number | null = null;
+            if (cert && cert.valid_to) {
+              const expiry = new Date(cert.valid_to).getTime();
+              if (Number.isFinite(expiry)) {
+                daysToExpiry = Math.floor((expiry - Date.now()) / 86_400_000);
+              }
+            }
+            done({ valid, daysToExpiry });
+          } catch {
+            done(null);
+          }
+        },
+      );
+      socket.on('timeout', () => done(null));
+      socket.on('error', () => done(null));
+    });
   }
 
   /** Inner pass: select distinct targets, fetch with a bounded pool, apply results. */
@@ -366,14 +564,27 @@ export class LinkVerifierService {
         `concurrency=${this.env.LINK_VERIFY_CONCURRENCY} timeoutMs=${this.env.LINK_VERIFY_TIMEOUT_MS}`,
     );
 
-    const probed = await this.fetchAllStatuses(budget.urls);
+    const probed = await this.fetchAllImageMeta(budget.urls);
 
-    for (const { href, status } of probed) {
+    for (const { href, status, bytes, format } of probed) {
+      // (a) keep the legacy images.status_code in sync so `image.broken` fires.
       await this.db.execute(sql`
         update images
         set status_code = ${status}
         where audit_id = ${auditId}
           and src = ${href}
+      `);
+      // (b) record byte weight + format on the page_resources image row(s).
+      // The crawl seeded one row per distinct (page_url, src); we update every
+      // row for this src so each referencing page reflects the live resource.
+      await this.db.execute(sql`
+        update page_resources
+        set status_code = ${status},
+            bytes = ${bytes},
+            format = ${format}
+        where audit_id = ${auditId}
+          and src = ${href}
+          and kind = 'image'
       `);
     }
 
@@ -469,6 +680,139 @@ export class LinkVerifierService {
 
     await Promise.all(Array.from({ length: poolSize }, () => worker()));
     return results;
+  }
+
+  /**
+   * Probe a list of image srcs (HEAD with GET fallback) returning live status +
+   * byte weight + format for each, using the same bounded pool. A fetch failure
+   * is recorded as `status=0` with null bytes/format (best-effort).
+   */
+  private async fetchAllImageMeta(urls: string[]): Promise<ImageProbeRow[]> {
+    const results: ImageProbeRow[] = new Array<ImageProbeRow>(urls.length);
+    const poolSize = Math.max(1, Math.min(this.env.LINK_VERIFY_CONCURRENCY, urls.length));
+    let next = 0;
+
+    const worker = async (): Promise<void> => {
+      for (;;) {
+        const idx = next++;
+        if (idx >= urls.length) return;
+        const href = urls[idx];
+        const isHttps = href.toLowerCase().startsWith('https://');
+        try {
+          results[idx] = { ...(await this.fetchImageMeta(href)), href, isHttps };
+        } catch {
+          results[idx] = { href, status: 0, bytes: null, format: null, isHttps };
+        }
+      }
+    };
+
+    await Promise.all(Array.from({ length: poolSize }, () => worker()));
+    return results;
+  }
+
+  /**
+   * One image probe: HEAD first to read `Content-Length`/`Content-Type` cheaply.
+   * On a 405/501 (HEAD-unsupported) or a missing `Content-Length`, fall back to a
+   * GET and either trust its `Content-Length` header or stream-count the body up
+   * to `IMAGE_FETCH_MAX_BYTES` (recording the cap when the stream exceeds it).
+   * Format is derived from `Content-Type` (then the src extension). Throws on a
+   * network error / timeout (the caller records it as inconclusive=status 0).
+   */
+  private async fetchImageMeta(
+    href: string,
+  ): Promise<{ status: number; bytes: number | null; format: string | null }> {
+    const head = await this.fetchHeaders(href, 'HEAD');
+    let status = head.status;
+    let contentType = head.contentType;
+    let bytes = head.contentLength;
+
+    // HEAD unsupported, or no usable length header → GET (read length / stream).
+    if (status === 405 || status === 501 || bytes === null) {
+      const got = await this.fetchHeaders(href, 'GET');
+      status = got.status;
+      contentType = got.contentType ?? contentType;
+      bytes = got.contentLength;
+      if (bytes === null && got.body) {
+        bytes = await this.countBytes(got.body);
+      } else {
+        // We took the length header (or have none); cancel the body promptly.
+        try {
+          await got.body?.cancel();
+        } catch {
+          // ignore — best-effort cleanup
+        }
+      }
+    } else {
+      try {
+        await head.body?.cancel();
+      } catch {
+        // ignore — best-effort cleanup
+      }
+    }
+
+    return { status, bytes, format: deriveImageFormat(contentType, href) };
+  }
+
+  /**
+   * One HTTP request with the browser UA, following redirects, bounded by the
+   * per-request timeout. Returns the final status, parsed `Content-Length`
+   * (positive int or null), `Content-Type`, and the still-open body stream so the
+   * caller can stream-count or cancel it. Throws on network error / timeout.
+   */
+  private async fetchHeaders(
+    href: string,
+    method: 'HEAD' | 'GET',
+  ): Promise<{
+    status: number;
+    contentLength: number | null;
+    contentType: string | null;
+    body: ReadableStream<Uint8Array> | null;
+  }> {
+    const response = await fetch(href, {
+      method,
+      redirect: 'follow',
+      signal: AbortSignal.timeout(this.env.LINK_VERIFY_TIMEOUT_MS),
+      headers: {
+        'User-Agent': this.env.LINK_VERIFY_USER_AGENT,
+        Accept: ACCEPT_HEADER,
+      },
+    });
+    const lenRaw = response.headers.get('content-length');
+    const len = lenRaw !== null && /^\d+$/.test(lenRaw.trim()) ? Number(lenRaw.trim()) : null;
+    return {
+      status: response.status,
+      contentLength: len !== null && len >= 0 ? len : null,
+      contentType: response.headers.get('content-type'),
+      body: (response.body as ReadableStream<Uint8Array> | null) ?? null,
+    };
+  }
+
+  /**
+   * Stream-count a response body, stopping (and cancelling) once the running
+   * total reaches `IMAGE_FETCH_MAX_BYTES` — the returned value is then the cap
+   * (recording "at least the cap" rather than downloading an unbounded image).
+   */
+  private async countBytes(body: ReadableStream<Uint8Array>): Promise<number> {
+    const reader = body.getReader();
+    let total = 0;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value?.byteLength ?? 0;
+        if (total >= IMAGE_FETCH_MAX_BYTES) {
+          total = IMAGE_FETCH_MAX_BYTES;
+          break;
+        }
+      }
+    } finally {
+      try {
+        await reader.cancel();
+      } catch {
+        // ignore — best-effort cleanup
+      }
+    }
+    return total;
   }
 
   /**
