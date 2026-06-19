@@ -256,10 +256,13 @@ export class EnrichService {
    * Step 9/10 — Assemble the {@link EnrichSummary} from lightweight count
    * SELECTs over the just-updated rows. The redirect-chain/loop counts read the
    * stored `pages.redirect_chain` jsonb (no column is written for them — Phase 3
-   * queries the same jsonb): a chain has >1 hop; a loop has a repeated url,
-   * detected set-based by comparing the array length against the count of
-   * DISTINCT `elem->>'url'` (distinct < total ⇒ some url repeats ⇒ loop). The
-   * `redirect_chain` column defaults to `[]`, so the length guard is safe.
+   * queries the same jsonb). The chain is origin-inclusive (element 0 is the
+   * requested URL), so the hop count is `length - 1`: a genuine multi-hop chain
+   * has more than one hop (`jsonb_array_length > 2`), matching the
+   * `links.redirect-chain` rule; a single 301 (length 2) is not counted. A loop
+   * has a repeated url, detected set-based by comparing the array length against
+   * the count of DISTINCT `elem->>'url'` (distinct < total ⇒ some url repeats ⇒
+   * loop). The `redirect_chain` column defaults to `[]`, so the length guard is safe.
    *
    * The verification counts (`linksVerified`/`falsePositivesCleared`/
    * `verifyInconclusive`) are filled in by the caller AFTER the live pass; here
@@ -303,7 +306,7 @@ export class EnrichService {
         select count(*)::int as n
         from pages
         where audit_id = ${auditId}
-          and jsonb_array_length(redirect_chain) > 1
+          and jsonb_array_length(redirect_chain) > 2
       `),
     );
     const redirectLoopPages = scalarCount(

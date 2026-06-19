@@ -8,7 +8,7 @@ import type { Rule } from '../../rule.types';
  * signal (it tells search engines two pages cover the same topic) — it should
  * outrank pure performance *opportunity* flags, so it is graded medium rather
  * than low (severity calibration, ANALYSIS §4 item 7). Scoped to
- * successfully-fetched (2xx) HTML pages (content-type gated) that have at least
+ * successfully-fetched (2xx) HTML pages (page_kind gated) that have at least
  * one h1. Inner GROUP BY on `h1->>0` HAVING count > 1, joined back to pages so
  * ONE finding is emitted per affected page.
  *
@@ -27,14 +27,14 @@ export const metaH1DuplicateRule: Rule = {
         from pages
         where audit_id = ${auditId}
           and status_class = '2xx'
-          and (content_type is null or content_type like 'text/html%')
+          and page_kind = 'html'
           and jsonb_array_length(h1) >= 1
         group by h1->>0
         having count(*) > 1
       ) d on (p.h1->>0) = d.val
       where p.audit_id = ${auditId}
         and p.status_class = '2xx'
-        and (p.content_type is null or p.content_type like 'text/html%')
+        and p.page_kind = 'html'
         and jsonb_array_length(p.h1) >= 1
       order by p.url
     `);

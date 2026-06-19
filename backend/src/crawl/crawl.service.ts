@@ -422,10 +422,11 @@ export class CrawlService {
     const crawlSource = this.normalizeCrawlSource(userData?.crawlSource);
     const depth = state.depthByUrl.get(requestNorm) ?? userData?.depth ?? 0;
 
-    // Redirect chain: derive hops from Crawlee's tracked redirect URLs when the
-    // loaded URL differs from the requested one. We don't have per-hop status
-    // codes from CheerioCrawler, so intermediate hops are recorded as 301.
-    const redirectChain = this.buildRedirectChain(request, statusCode);
+    // Redirect chain: built from got's `response.redirectUrls`, which records
+    // every redirect hop (not just origin→final), so a single 301 is
+    // distinguishable from a genuine multi-hop chain. We don't have per-hop
+    // status codes from CheerioCrawler, so intermediate hops are recorded as 301.
+    const redirectChain = this.buildRedirectChain(request, response, statusCode);
 
     const contentType = headerValue(headers, 'content-type');
     const contentLengthHeader = headerValue(headers, 'content-length');
@@ -496,15 +497,32 @@ export class CrawlService {
    * one we record each intermediate hop. Per-hop status codes are not exposed by
    * CheerioCrawler, so intermediate hops use 301 and the final hop the real code.
    */
-  private buildRedirectChain(request: CrawleeRequest, finalStatus: number): RedirectHop[] {
-    const loaded = request.loadedUrl;
-    if (!loaded || normalizeUrl(loaded) === normalizeUrl(request.url)) {
+  private buildRedirectChain(
+    request: CrawleeRequest,
+    response: CheerioCrawlingContext['response'],
+    finalStatus: number,
+  ): RedirectHop[] {
+    // got records each redirect *destination* (the Location target), in order, in
+    // `response.redirectUrls`; `request.url` is the origin and the last entry
+    // equals `request.loadedUrl`. The full ordered hop list is therefore
+    // [origin, ...redirectUrls], and the number of redirect HOPS is
+    // `redirectUrls.length` (so the chain length is hops + 1).
+    //
+    // Capturing the intermediate URLs — instead of collapsing every redirect to
+    // [origin, final] — is what lets `links.redirect-chain` tell a benign single
+    // 301 (chain length 2) apart from a genuine multi-hop chain (length > 2).
+    const redirectUrls = response.redirectUrls ?? [];
+    if (redirectUrls.length === 0) {
       return [];
     }
-    return [
-      { url: normalizeUrl(request.url), statusCode: 301 },
-      { url: normalizeUrl(loaded), statusCode: finalStatus },
-    ];
+    // No per-hop status codes are available from CheerioCrawler, so every hop
+    // except the terminal one is recorded as 301; only the final hop carries the
+    // real terminal status.
+    const urls = [request.url, ...redirectUrls.map((u: URL) => u.toString())];
+    return urls.map((url, i) => ({
+      url: normalizeUrl(url),
+      statusCode: i === urls.length - 1 ? finalStatus : 301,
+    }));
   }
 
   /**

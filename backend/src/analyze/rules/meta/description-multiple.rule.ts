@@ -4,7 +4,7 @@ import type { Rule } from '../../rule.types';
 /**
  * `meta.description.multiple` — Multiple meta descriptions on one page.
  *
- * Severity: low. Scoped to successfully-fetched (2xx) HTML pages only (content-type gated).
+ * Severity: low. Scoped to successfully-fetched (2xx) HTML pages only (page_kind gated).
  *
  * SQL mechanism: `jsonb_array_length(meta_description) > 1`.
  */
@@ -18,7 +18,7 @@ export const metaDescriptionMultipleRule: Rule = {
       from pages
       where audit_id = ${auditId}
         and status_class = '2xx'
-        and (content_type is null or content_type like 'text/html%')
+        and page_kind = 'html'
         and jsonb_array_length(meta_description) > 1
       order by url
     `);

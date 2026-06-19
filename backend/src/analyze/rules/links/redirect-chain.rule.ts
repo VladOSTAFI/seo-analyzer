@@ -7,11 +7,15 @@ import type { Rule } from '../../rule.types';
  * Severity: high.
  *
  * Page-centric per the catalogue mechanism: reads the stored `pages.redirect_chain`
- * jsonb (no dedicated column). A chain has `jsonb_array_length > 1`. A loop is detected
- * set-based by comparing the array length against the count of DISTINCT `elem->>'url'`:
- * when length > distinct-url-count some url repeats ⇒ loop. This mirrors the
+ * jsonb (no dedicated column). The chain is stored origin-inclusive — element 0 is
+ * the requested URL and each subsequent element is a redirect hop — so the number
+ * of redirect HOPS is `jsonb_array_length - 1`. A finding fires only for a GENUINE
+ * multi-hop chain (more than one hop ⇒ `jsonb_array_length > 2`) OR a loop. A loop
+ * is detected set-based by comparing the array length against the count of DISTINCT
+ * `elem->>'url'`: when length > distinct-url-count some url repeats ⇒ loop. A single
+ * 301 (chain length 2, one hop) is intentionally NOT flagged. This mirrors the
  * loop-detection SQL in {@link EnrichService.collectSummary}. Findings emit on the
- * PAGE url.
+ * PAGE url; `detail.hops` is the redirect-hop count (length - 1).
  */
 export const linksRedirectChainRule: Rule = {
   id: 'links.redirect-chain',
@@ -21,7 +25,7 @@ export const linksRedirectChainRule: Rule = {
     const result = await db.execute(sql`
       select
         url,
-        jsonb_array_length(redirect_chain) as hops,
+        jsonb_array_length(redirect_chain) - 1 as hops,
         redirect_chain as chain,
         jsonb_array_length(redirect_chain) > (
           select count(distinct elem->>'url')
@@ -29,7 +33,15 @@ export const linksRedirectChainRule: Rule = {
         ) as is_loop
       from pages
       where audit_id = ${auditId}
-        and jsonb_array_length(redirect_chain) > 1
+        and (
+          -- genuine multi-hop chain: more than one redirect hop (length - 1 > 1)
+          jsonb_array_length(redirect_chain) > 2
+          -- or a loop: some url repeats within the chain
+          or jsonb_array_length(redirect_chain) > (
+            select count(distinct elem->>'url')
+            from jsonb_array_elements(redirect_chain) as elem
+          )
+        )
     `);
     return result.rows.map((row) => ({
       url: row.url as string,

@@ -32,31 +32,47 @@ describe('meta.h1.missing (int)', () => {
     expect(findings).toEqual([{ url: 'https://t/missing', detail: {} }]);
   });
 
-  it('produces zero findings for non-HTML content types even when h1 is empty', async () => {
+  it('produces zero findings for non-HTML page kinds even when h1 is empty', async () => {
     await seedPages(auditId, [
-      // XML sitemap with empty h1 — must be ignored
-      { url: 'https://t/sitemap.xml', statusClass: '2xx', contentType: 'application/xml', h1: [] },
-      // Atom feed with empty h1 — must be ignored
+      // XML sitemap (page_kind 'sitemap') — must be ignored EVEN THOUGH the server
+      // mislabels it as text/html. This is the regression the page_kind gate fixes:
+      // a content-type filter would wrongly let this through.
+      {
+        url: 'https://t/sitemap.xml',
+        statusClass: '2xx',
+        contentType: 'text/html; charset=utf-8',
+        pageKind: 'sitemap',
+        h1: [],
+      },
+      // Atom feed — must be ignored
       {
         url: 'https://t/feed.atom',
         statusClass: '2xx',
         contentType: 'application/atom+xml',
+        pageKind: 'feed',
         h1: [],
       },
-      // text/html with empty h1 — must still fire
+      // Non-HTML resource (JSON/binary/etc.) — must be ignored
+      {
+        url: 'https://t/data.json',
+        statusClass: '2xx',
+        contentType: 'application/json',
+        pageKind: 'other',
+        h1: [],
+      },
+      // HTML page with empty h1 — must fire
       {
         url: 'https://t/html-missing',
         statusClass: '2xx',
         contentType: 'text/html; charset=utf-8',
+        pageKind: 'html',
         h1: [],
       },
-      // null content_type treated as HTML — must still fire
-      { url: 'https://t/null-ct', statusClass: '2xx', contentType: null, h1: [] },
     ]);
 
     const findings = await runRule(metaH1MissingRule, auditId);
 
     const urls = findings.map((f) => f.url).sort();
-    expect(urls).toEqual(['https://t/html-missing', 'https://t/null-ct']);
+    expect(urls).toEqual(['https://t/html-missing']);
   });
 });

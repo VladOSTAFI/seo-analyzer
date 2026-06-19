@@ -4,7 +4,7 @@ import type { Rule } from '../../rule.types';
 /**
  * `meta.title.template` — Title length is outside the recommended 30–60 chars.
  *
- * Severity: info. Scoped to successfully-fetched (2xx) HTML pages (content-type gated) that
+ * Severity: info. Scoped to successfully-fetched (2xx) HTML pages (page_kind gated) that
  * have a title (`jsonb_array_length(title) >= 1`). Length is measured on the first
  * title (`title->>0`) via `char_length`. Boundaries: `< 30` ⇒ `too-short`,
  * `> 60` ⇒ `too-long` (30 and 60 inclusive are fine).
@@ -21,7 +21,7 @@ export const metaTitleTemplateRule: Rule = {
       from pages
       where audit_id = ${auditId}
         and status_class = '2xx'
-        and (content_type is null or content_type like 'text/html%')
+        and page_kind = 'html'
         and jsonb_array_length(title) >= 1
         and (char_length(title->>0) < 30 or char_length(title->>0) > 60)
       order by url

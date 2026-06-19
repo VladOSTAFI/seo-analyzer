@@ -35,6 +35,13 @@ export const perfPsiUsabilityRule: Rule = {
 
   async run(db, auditId) {
     // ── 1. Rollup: flag+strategy pairs that exceed the prevalence threshold ──
+    //
+    // FIX: Both count(*) occurrences in the HAVING clause are cast to ::numeric
+    // so that the ${rollupPct} parameter (a JS float, e.g. 0.6) is not coerced
+    // to bigint by Postgres. Without the cast, node-postgres sends "0.6" as an
+    // untyped text parameter; Postgres infers bigint from the count(*) context
+    // and rejects the fractional value with:
+    //   "invalid input syntax for type bigint: "0.6""
     const rollupResult = await db.execute(sql`
       select
         p.strategy,
@@ -48,8 +55,8 @@ export const perfPsiUsabilityRule: Rule = {
            jsonb_array_elements_text(p.usability_flags) as flag
       where p.audit_id = ${auditId}
       group by p.strategy, flag
-      having count(*) >= ${rollupPct} *
-        (select count(*)
+      having count(*)::numeric >= ${rollupPct} *
+        (select count(*)::numeric
            from performance
           where audit_id = ${auditId}
             and strategy = p.strategy)

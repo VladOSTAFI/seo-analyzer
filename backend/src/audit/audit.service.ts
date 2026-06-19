@@ -239,9 +239,10 @@ export class AuditService {
     auditId: string,
     crawl: CrawlSummary,
     enrich: EnrichSummary,
-    analyze: AnalyzeSummary,
-    // CWV provenance is read directly from the performance table below, so the
-    // perf stage summary itself is not needed here (kept for signature symmetry).
+    // Inert rules are now counted from the findings table (not analyze.byRule),
+    // and CWV provenance is read from the performance table — so neither stage
+    // summary is needed here. Both kept for signature symmetry with the pipeline.
+    _analyze: AnalyzeSummary,
     _perf: PerformanceSummary,
   ): Promise<void> {
     // ── CWV source distribution from performance rows ────────────────────────
@@ -280,10 +281,24 @@ export class AuditService {
         ? Number((enrich as unknown as Record<string, unknown>).externalsVerified)
         : 0;
 
-    // ── Inert rules = rules with 0 findings ──────────────────────────────────
+    // ── Inert rules = rules with 0 PERSISTED findings ────────────────────────
+    // Count from the findings table, NOT analyze.byRule: the `perf.*` rules run
+    // in the perf stage (the analyze stage sees an empty performance table and
+    // records 0 for them), so analyze.byRule structurally undercounts every
+    // perf rule. The findings table is the single source of truth and captures
+    // both analyze- and perf-stage findings.
     const allRuleIds = RULES.map((r) => r.id);
-    const byRule = analyze.byRule ?? {};
-    const rulesInert = allRuleIds.filter((id) => !byRule[id] || byRule[id] === 0);
+    const findingCountResult = await this.db.execute(sql`
+      select rule_id, count(*)::int as n
+      from findings
+      where audit_id = ${auditId}
+      group by rule_id
+    `);
+    const byRule: Record<string, number> = {};
+    for (const row of findingCountResult.rows) {
+      byRule[row.rule_id as string] = Number(row.n);
+    }
+    const rulesInert = allRuleIds.filter((id) => !byRule[id]);
 
     // ── Crawl cap (defaults to 500 if not configured) ─────────────────────────
     // We surface the cap as the configured or effective limit rather than a DB
