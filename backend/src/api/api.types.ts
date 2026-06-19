@@ -1,6 +1,8 @@
 import type { Confidence, Severity } from '../analyze/rule.types';
 import type { AuditStatus } from '../audit/audit.repository';
 import type { CoverageManifest } from '../report/report.types';
+import type { ScoreResult } from '../report/report.score';
+import type { ActionSummary } from '../report/report.actions';
 
 /**
  * Phase 7 REST contract — the FROZEN seam between the read layer
@@ -18,6 +20,9 @@ export type { Severity } from '../analyze/rule.types';
 export type { Confidence } from '../analyze/rule.types';
 /** Re-exported so the API layer references one audit-status vocabulary. */
 export type { AuditStatus } from '../audit/audit.repository';
+/** Re-exported so the API layer references one ScoreResult/ActionSummary shape. */
+export type { ScoreResult } from '../report/report.score';
+export type { ActionSummary } from '../report/report.actions';
 
 /** Zero-filled count of findings per severity (every key always present). */
 export type SeverityCounts = Record<Severity, number>;
@@ -58,6 +63,13 @@ export interface AuditDetailDto extends AuditDto {
   coverage: CoverageManifest | null;
   /** De-duplicated issue count (unique ruleFamily × url pairs). */
   distinctIssues: number;
+  /** SEO health score (plan 12), null until the report stage computes it. */
+  score: ScoreResult | null;
+  /**
+   * Top-N prioritized actions (plan 13), trimmed to {id,title,severity,
+   * prevalence,priorityScore}. Computed on read; empty when there are no issues.
+   */
+  topActions: ActionSummary[];
 }
 
 /**

@@ -20,40 +20,50 @@ describe('links.external-flag (int)', () => {
     await closePool();
   });
 
-  it('flags external links missing nofollow/sponsored/ugc and respects @> containment', async () => {
+  // The rule is narrowed (Item 6) to MONETIZED-looking external hrefs only
+  // (utm_/?ref=/&ref=//aff//go///recommends/) that lack a nofollow/sponsored/ugc
+  // rel token. Plain external links without monetization markers are ignored.
+  it('flags monetized external links missing nofollow/sponsored/ugc and respects @> containment', async () => {
     await seedLinks(auditId, [
-      // trigger: external, rel has only noopener (none of the flagged tokens)
+      // trigger: monetized (/go/) external, rel has only noopener (no flagged token)
       {
         sourceUrl: 'https://t/a',
-        href: 'https://ext/flag',
+        href: 'https://ext/go/deal',
         type: 'external',
         rel: ['noopener'],
       },
-      // trigger: external, empty rel
+      // trigger: monetized (utm_) external, empty rel
       {
         sourceUrl: 'https://t/a',
-        href: 'https://ext/bare',
+        href: 'https://ext/landing?utm_source=x',
         type: 'external',
         rel: [],
       },
-      // non-trigger: external WITH nofollow
+      // non-trigger: monetized external WITH nofollow
       {
         sourceUrl: 'https://t/a',
-        href: 'https://ext/nofollow',
+        href: 'https://ext/go/nofollow?utm_source=x',
         type: 'external',
         rel: ['nofollow'],
       },
-      // non-trigger: external with sponsored among others
+      // non-trigger: monetized external with sponsored among others
       {
         sourceUrl: 'https://t/a',
-        href: 'https://ext/sponsored',
+        href: 'https://ext/go/sponsored',
         type: 'external',
         rel: ['noopener', 'sponsored'],
       },
-      // non-trigger: internal link (wrong type), no rel
+      // non-trigger: NON-monetized external (Item 6 narrowing) — plain link is ignored
       {
         sourceUrl: 'https://t/a',
-        href: 'https://t/internal',
+        href: 'https://ext/plain',
+        type: 'external',
+        rel: [],
+      },
+      // non-trigger: internal link (wrong type), even though href looks monetized
+      {
+        sourceUrl: 'https://t/a',
+        href: 'https://t/go/internal',
         type: 'internal',
         rel: [],
       },
@@ -63,17 +73,17 @@ describe('links.external-flag (int)', () => {
 
     expect(findings).toEqual(
       expect.arrayContaining([
-        { url: 'https://t/a', detail: { href: 'https://ext/flag', rel: ['noopener'] } },
-        { url: 'https://t/a', detail: { href: 'https://ext/bare', rel: [] } },
+        { url: 'https://t/a', detail: { href: 'https://ext/go/deal', rel: ['noopener'] } },
+        { url: 'https://t/a', detail: { href: 'https://ext/landing?utm_source=x', rel: [] } },
       ]),
     );
     expect(findings).toHaveLength(2);
   });
 
-  it('dedupes identical (source_url, href) external links into one finding', async () => {
+  it('dedupes identical (source_url, href) monetized external links into one finding', async () => {
     await seedLinks(auditId, [
-      { sourceUrl: 'https://t/a', href: 'https://ext/x', type: 'external', rel: ['noopener'] },
-      { sourceUrl: 'https://t/a', href: 'https://ext/x', type: 'external', rel: ['noopener'] },
+      { sourceUrl: 'https://t/a', href: 'https://ext/go/x', type: 'external', rel: ['noopener'] },
+      { sourceUrl: 'https://t/a', href: 'https://ext/go/x', type: 'external', rel: ['noopener'] },
     ]);
 
     const findings = await runRule(linksExternalFlagRule, auditId);

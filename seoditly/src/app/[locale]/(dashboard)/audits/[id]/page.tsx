@@ -8,6 +8,7 @@ import { AUDITS_HREF } from "@/lib/constants";
 import { DEFAULT_LOCALE, isLocale, localeHref } from "@/lib/i18n/config";
 import { getRequestLocale } from "@/lib/i18n/server";
 import { getDashboard } from "@/lib/copy/dashboard";
+import { getScoreCopy } from "@/lib/copy/score";
 import { isTerminal } from "@/lib/api/types";
 import { Button } from "@/components/ui/button";
 import { AuditDetailLive } from "@/components/dashboard/audit-detail-live";
@@ -44,6 +45,7 @@ export default async function AuditDetailPage({
   const { id } = await params;
   const locale = await getRequestLocale();
   const t = getDashboard(locale);
+  const scoreCopy = getScoreCopy(locale);
 
   let audit;
   try {
@@ -80,6 +82,8 @@ export default async function AuditDetailPage({
         strings={t.detail}
         pipelineStages={t.pipelineStages}
         statusLabels={t.status}
+        scoreStrings={scoreCopy.score}
+        actionStrings={scoreCopy.actions}
         reportStrings={t.report}
       />
 

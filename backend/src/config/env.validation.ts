@@ -122,6 +122,33 @@ export const envSchema = z.object({
   // below this (0..100). The only genuinely per-page perf signal.
   PERF_LAB_SCORE_MIN: intWithDefault(90),
 
+  // --- Phase 1 rules-bundle tuning ---
+  // `index.click-depth` flags live HTML pages buried deeper than this many clicks
+  // (BFS depth from the crawl seed). Default 3.
+  SEO_MAX_DEPTH: intWithDefault(3),
+  // Master gate for the heuristic `index.soft-404` rule. Allows disabling on
+  // multilingual sites with high false-positive rates. Default ON.
+  SEO_SOFT404_ENABLED: boolWithDefault(true),
+  // Word-count ceiling for the soft-404 heuristic. RESERVED — wired in once
+  // feature 08 adds the `word_count` column; unused by the vocabulary-only phase.
+  SEO_SOFT404_MAX_WORDS: intWithDefault(50),
+  // `links.anchor-quality` generic-anchor phrase list. Optional comma-separated
+  // override of the built-in multilingual default; whole-string (not substring)
+  // match. Empty/unset uses the rule's built-in list.
+  LINK_GENERIC_ANCHORS: strWithDefault(''),
+
+  // --- Report layer: score + action plan (plans 12/13) ---
+  // Exponential-decay constant for the SEO health score normalization (plan 12
+  // §3.5): score = round(100 × exp(−K × penaltyDensity)). Tunable so calibration
+  // can shift without a code change; changing it shifts historical comparisons.
+  SCORE_DECAY_K: floatWithDefault(0.35),
+  // Size of the report's "Top fixes" list and the API `topActions` array.
+  REPORT_TOP_ACTIONS: intWithDefault(10),
+  // Cap on the "By Page" sheet rows for very large sites (logged on truncation).
+  REPORT_BY_PAGE_MAX_ROWS: intWithDefault(5000),
+  // Per-action affected-URL sample retained for the Action Plan sheet.
+  REPORT_AFFECTED_URLS_SAMPLE: intWithDefault(50),
+
   // Report output directory (Phase 5).
   OUTPUT_DIR: z
     .string()

@@ -1,5 +1,6 @@
 import type { Confidence } from '../analyze/rule.types';
 import type { Cell, FindingRow, ReportSection, SheetRow } from './report.types';
+import { remediationFor } from './report.remediation';
 
 /**
  * The COMPLETE Phase 5 report section registry — one entry per worksheet.
@@ -30,16 +31,19 @@ import type { Cell, FindingRow, ReportSection, SheetRow } from './report.types';
  *   - `links.external-flag` / "External Links" sheet — only included when
  *     `RULE_EXTERNAL_FLAG_ENABLED` is truthy (mirrors rule.registry.ts exactly).
  *
- * ── coverage check (30 ruleIds when external-flag is OFF, 31 when ON) ────────
+ * ── coverage check (36 ruleIds when external-flag is OFF, 37 when ON) ────────
  *   Redirects        : links.internal-redirect, links.redirect-chain
  *   Broken Links     : links.broken-internal, links.broken-external
  *   External Links   : links.external-flag (conditional)
+ *   Link Quality     : links.anchor-quality, links.internal-nofollow
  *   Titles           : meta.title.missing, meta.title.duplicate, meta.title.multiple
  *   Descriptions     : meta.description.missing, meta.description.duplicate, meta.description.multiple
  *   H1               : meta.h1.missing, meta.h1.duplicate, meta.h1.multiple
  *   Duplicate Pages  : dupe.content
  *   Indexation       : index.canonical, index.robots
  *   URL Heuristics   : index.url-heuristics
+ *   Internal Structure : index.orphan-page, index.click-depth
+ *   Signal Conflicts : index.signal-conflict, index.soft-404
  *   Pagination       : pagination.rel
  *   Hreflang         : i18n.hreflang
  *   Images           : image.alt-title, image.broken
@@ -199,14 +203,7 @@ function buildH1Rows(findings: Parameters<ReportSection['buildRows']>[0]): Sheet
         issue,
         h1,
         count,
-        recommendation:
-          issue === 'missing'
-            ? 'Add a single <h1>'
-            : issue === 'duplicate'
-              ? 'Make the H1 unique per page'
-              : issue === 'template'
-                ? 'Adjust H1 length'
-                : 'Keep a single <h1>',
+        recommendation: remediationFor(f.ruleId)?.howToFix ?? null,
       });
       continue;
     }
@@ -261,7 +258,7 @@ function buildH1Rows(findings: Parameters<ReportSection['buildRows']>[0]): Sheet
       h1,
       count: null,
       notes: subReasons.join('; '),
-      recommendation: 'Fix H1 structure: ensure exactly one unique H1 per page',
+      recommendation: remediationFor(group[0]!.ruleId)?.howToFix ?? null,
     });
   }
 
@@ -314,7 +311,6 @@ export const REPORT_SECTIONS: ReportSection[] = [
     ruleIds: ['links.internal-redirect', 'links.redirect-chain'],
     buildRows: (findings): SheetRow[] =>
       findings.map((f) => {
-        const isChain = f.ruleId === 'links.redirect-chain';
         return {
           severity: f.severity,
           confidence: f.confidence,
@@ -323,9 +319,7 @@ export const REPORT_SECTIONS: ReportSection[] = [
           targetStatusCode: num(f.detail, 'targetStatusCode'),
           hops: num(f.detail, 'hops'),
           isLoop: bool(f.detail, 'isLoop'),
-          recommendation: isChain
-            ? 'Collapse the redirect chain; link directly to the final URL'
-            : 'Point link to final URL (avoid the 3xx hop)',
+          recommendation: remediationFor(f.ruleId)?.howToFix ?? null,
         };
       }),
   },
@@ -352,11 +346,46 @@ export const REPORT_SECTIONS: ReportSection[] = [
         targetStatusCode: num(f.detail, 'targetStatusCode'),
         // 'links.broken-internal' → 'internal'; 'links.broken-external' → 'external'
         linkType: ruleTail(f.ruleId).replace(/^broken-/, ''),
-        recommendation: 'Remove or fix link',
+        recommendation: remediationFor(f.ruleId)?.howToFix ?? null,
       })),
   },
   // Conditional: only when RULE_EXTERNAL_FLAG_ENABLED is truthy (mirrors rule.registry.ts).
   ...(externalFlagEnabled ? [EXTERNAL_LINKS_SECTION] : []),
+
+  // ── links.* (anchor quality + internal nofollow) ──────────────────────────
+  {
+    spec: {
+      name: 'Link Quality',
+      description:
+        'Internal links with empty/generic anchor text, or rel=nofollow on internal links.',
+      columns: [
+        { header: 'Severity', key: 'severity', width: 10 },
+        { header: 'Confidence', key: 'confidence', width: 12 },
+        { header: 'Page (source)', key: 'url', width: 60 },
+        { header: 'Link href', key: 'href', width: 60 },
+        { header: 'Anchor text', key: 'anchorText', width: 40 },
+        { header: 'Issue', key: 'issue', width: 20 },
+        { header: 'rel', key: 'rel', width: 24 },
+      ],
+    },
+    ruleIds: ['links.anchor-quality', 'links.internal-nofollow'],
+    buildRows: (findings): SheetRow[] =>
+      findings.map((f) => {
+        const isNofollow = f.ruleId === 'links.internal-nofollow';
+        // anchor-quality: detail.anchorIssue is 'empty'|'generic'; internal-nofollow: 'nofollow'.
+        const issue = isNofollow ? 'nofollow' : str(f.detail, 'anchorIssue');
+        return {
+          severity: f.severity,
+          confidence: f.confidence,
+          url: f.url ?? SITE_WIDE,
+          href: str(f.detail, 'href'),
+          anchorText: str(f.detail, 'anchorText'),
+          issue,
+          rel: joined(f.detail, 'rel'),
+          recommendation: remediationFor(f.ruleId)?.howToFix ?? null,
+        };
+      }),
+  },
 
   // ── meta.* (titles / descriptions / h1) ────────────────────────────────────
   {
@@ -387,12 +416,7 @@ export const REPORT_SECTIONS: ReportSection[] = [
           issue,
           title,
           count,
-          recommendation:
-            issue === 'missing'
-              ? 'Add a unique <title>'
-              : issue === 'duplicate'
-                ? 'Make the title unique per page'
-                : 'Keep a single <title>',
+          recommendation: remediationFor(f.ruleId)?.howToFix ?? null,
         };
       }),
   },
@@ -428,12 +452,7 @@ export const REPORT_SECTIONS: ReportSection[] = [
           issue,
           description,
           count,
-          recommendation:
-            issue === 'missing'
-              ? 'Add a meta description'
-              : issue === 'duplicate'
-                ? 'Make the description unique per page'
-                : 'Keep a single meta description',
+          recommendation: remediationFor(f.ruleId)?.howToFix ?? null,
         };
       }),
   },
@@ -478,7 +497,7 @@ export const REPORT_SECTIONS: ReportSection[] = [
         url: f.url ?? SITE_WIDE,
         contentHash: str(f.detail, 'contentHash'),
         duplicateCount: num(f.detail, 'duplicateCount'),
-        recommendation: 'Canonicalize duplicates to one URL',
+        recommendation: remediationFor(f.ruleId)?.howToFix ?? null,
       })),
   },
 
@@ -509,9 +528,7 @@ export const REPORT_SECTIONS: ReportSection[] = [
           issue,
           canonicalUrl: str(f.detail, 'canonicalUrl'),
           reason: joined(f.detail, 'reason'),
-          recommendation: isRobots
-            ? 'Remove the noindex/robots block if the page should rank'
-            : 'Set a self-referential canonical',
+          recommendation: remediationFor(f.ruleId)?.howToFix ?? null,
         };
       }),
   },
@@ -533,8 +550,75 @@ export const REPORT_SECTIONS: ReportSection[] = [
         confidence: f.confidence,
         url: f.url ?? SITE_WIDE,
         issues: joined(f.detail, 'issues'),
-        recommendation: 'Use lowercase, hyphenated, short, param-free URLs',
+        recommendation: remediationFor(f.ruleId)?.howToFix ?? null,
       })),
+  },
+
+  // ── index.* (internal structure: orphans + click depth) ───────────────────
+  {
+    spec: {
+      name: 'Internal Structure',
+      description: 'Orphan pages (no internal inlinks) and pages buried too many clicks deep.',
+      columns: [
+        { header: 'Severity', key: 'severity', width: 10 },
+        { header: 'Confidence', key: 'confidence', width: 12 },
+        { header: 'Page', key: 'url', width: 60 },
+        { header: 'Issue', key: 'issue', width: 14 },
+        { header: 'Depth', key: 'depth', width: 8 },
+        { header: 'Inlinks', key: 'inlinkCount', width: 10 },
+        { header: 'In sitemap?', key: 'inSitemap', width: 12 },
+      ],
+    },
+    ruleIds: ['index.orphan-page', 'index.click-depth'],
+    buildRows: (findings): SheetRow[] =>
+      findings.map((f) => {
+        const isOrphan = f.ruleId === 'index.orphan-page';
+        return {
+          severity: f.severity,
+          confidence: f.confidence,
+          url: f.url ?? SITE_WIDE,
+          issue: isOrphan ? 'orphan' : 'deep',
+          depth: num(f.detail, 'depth'),
+          inlinkCount: num(f.detail, 'inlinkCount'),
+          inSitemap: bool(f.detail, 'inSitemap'),
+          recommendation: remediationFor(f.ruleId)?.howToFix ?? null,
+        };
+      }),
+  },
+
+  // ── index.* (signal conflicts: contradictory indexation directives) ───────
+  {
+    spec: {
+      name: 'Signal Conflicts',
+      description:
+        'Contradictory indexation directives (noindex/canonical conflicts) and soft-404s.',
+      columns: [
+        { header: 'Severity', key: 'severity', width: 10 },
+        { header: 'Confidence', key: 'confidence', width: 12 },
+        { header: 'Page', key: 'url', width: 60 },
+        { header: 'Conflict / Type', key: 'issue', width: 26 },
+        { header: 'Target / Detail', key: 'target', width: 60 },
+      ],
+    },
+    ruleIds: ['index.signal-conflict', 'index.soft-404'],
+    buildRows: (findings): SheetRow[] =>
+      findings.map((f) => {
+        const isConflict = f.ruleId === 'index.signal-conflict';
+        // signal-conflict: detail.conflict names the sub-check; soft-404: fixed label.
+        const issue = isConflict ? str(f.detail, 'conflict') : 'soft-404';
+        // signal-conflict: detail.target is the offending related URL; soft-404: matched title/h1.
+        const target = isConflict
+          ? str(f.detail, 'target')
+          : (str(f.detail, 'title') ?? str(f.detail, 'h1'));
+        return {
+          severity: f.severity,
+          confidence: f.confidence,
+          url: f.url ?? SITE_WIDE,
+          issue,
+          target,
+          recommendation: remediationFor(f.ruleId)?.howToFix ?? null,
+        };
+      }),
   },
 
   // ── pagination.* ───────────────────────────────────────────────────────────
@@ -558,7 +642,7 @@ export const REPORT_SECTIONS: ReportSection[] = [
         url: f.url ?? SITE_WIDE,
         relNext: str(f.detail, 'relNext'),
         issue: str(f.detail, 'issue'),
-        recommendation: 'Fix rel=next/prev reciprocity across the series',
+        recommendation: remediationFor(f.ruleId)?.howToFix ?? null,
       })),
   },
 
@@ -586,7 +670,7 @@ export const REPORT_SECTIONS: ReportSection[] = [
         href: str(f.detail, 'href'),
         // detail.issue is a pre-joined string (e.g. 'non-reciprocal,invalid-lang')
         issue: joined(f.detail, 'issue'),
-        recommendation: 'Add reciprocal return tags and valid BCP-47 lang codes',
+        recommendation: remediationFor(f.ruleId)?.howToFix ?? null,
       })),
   },
 
@@ -619,7 +703,7 @@ export const REPORT_SECTIONS: ReportSection[] = [
           src: str(f.detail, 'src'),
           issue,
           statusCode: num(f.detail, 'statusCode'),
-          recommendation: isBroken ? 'Fix or remove the broken image' : 'Add descriptive alt text',
+          recommendation: remediationFor(f.ruleId)?.howToFix ?? null,
         };
       }),
   },
@@ -652,9 +736,7 @@ export const REPORT_SECTIONS: ReportSection[] = [
           issue: isMainMirror ? 'main-mirror' : 'trailing-slash',
           variant,
           mirrorCount: num(f.detail, 'mirrorCount'),
-          recommendation: isMainMirror
-            ? 'Redirect mirrors to one canonical origin'
-            : 'Redirect to a single trailing-slash form',
+          recommendation: remediationFor(f.ruleId)?.howToFix ?? null,
         };
       }),
   },
@@ -683,7 +765,6 @@ export const REPORT_SECTIONS: ReportSection[] = [
         // psi-usability: { strategy, flags[] }; lab-score: { strategy, score }.
         // 'flags' column carries usability flags OR the cls-inp tripped-metric list.
         const flagsSource = f.detail.flags !== undefined ? 'flags' : 'issues';
-        const isLabScore = f.ruleId === 'perf.lab-score';
         return {
           severity: f.severity,
           confidence: f.confidence,
@@ -695,9 +776,7 @@ export const REPORT_SECTIONS: ReportSection[] = [
           score: num(f.detail, 'score'),
           flags: joined(f.detail, flagsSource),
           metric: ruleTail(f.ruleId),
-          recommendation: isLabScore
-            ? 'Improve Lighthouse performance score: reduce render-blocking resources, optimize images and JavaScript'
-            : null,
+          recommendation: remediationFor(f.ruleId)?.howToFix ?? null,
         };
       }),
   },

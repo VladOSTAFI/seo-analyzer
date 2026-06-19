@@ -11,6 +11,7 @@ import { auditProxyPath } from "@/lib/api/client-paths";
 import { AUDITS_HREF } from "@/lib/constants";
 import { localeHref, type Locale } from "@/lib/i18n/config";
 import type { Dashboard } from "@/lib/copy/dashboard";
+import type { ScoreCopy } from "@/lib/copy/score";
 import { stripScheme, formatDateTime } from "@/lib/format";
 import {
   Card,
@@ -22,17 +23,25 @@ import { AuditStatusBadge } from "@/components/dashboard/audit-status-badge";
 import { PipelineStepper } from "@/components/dashboard/pipeline-stepper";
 import { SeverityRollup } from "@/components/dashboard/severity-rollup";
 import { ReportDownloadButton } from "@/components/dashboard/report-download-button";
+import { ScoreCard, ScoreNotScored } from "@/components/dashboard/score-card";
+import { TopActions } from "@/components/dashboard/top-actions";
 
 /**
  * Client wrapper that owns the live state of an audit detail. It receives the
  * server-rendered initial `AuditDetailDto` and, while the audit is non-terminal,
  * polls `GET /audits/:id` THROUGH THE PROXY every ~3s. All copy is passed in
  * (localized server-side); the polling/refresh behavior is unchanged.
+ *
+ * The health-score panel and "Top 10 fixes" list (Phase 1) render at the top
+ * from the same live `audit` state, so they fill in automatically once the
+ * report stage scores the audit.
  */
 export function AuditDetailLive({
   initial,
   locale,
   strings,
+  scoreStrings,
+  actionStrings,
   reportStrings,
 }: {
   initial: AuditDetailDto;
@@ -40,6 +49,8 @@ export function AuditDetailLive({
   strings: Dashboard["detail"];
   pipelineStages: Dashboard["pipelineStages"];
   statusLabels: Dashboard["status"];
+  scoreStrings: ScoreCopy["score"];
+  actionStrings: ScoreCopy["actions"];
   reportStrings: Dashboard["report"];
 }) {
   const [audit, setAudit] = useState<AuditDetailDto>(initial);
@@ -142,6 +153,21 @@ export function AuditDetailLive({
           notReadyTitle={reportStrings.notReadyTitle}
         />
       </div>
+
+      {/* Health score (Phase 1) */}
+      {audit.score ? (
+        <ScoreCard score={audit.score} locale={locale} strings={scoreStrings} />
+      ) : (
+        <ScoreNotScored strings={scoreStrings} />
+      )}
+
+      {/* Top 10 fixes (Phase 1) */}
+      <TopActions
+        actions={audit.topActions ?? []}
+        running={running}
+        locale={locale}
+        strings={actionStrings}
+      />
 
       {/* Pipeline */}
       <Card>

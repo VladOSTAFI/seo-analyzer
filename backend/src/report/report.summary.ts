@@ -1,4 +1,4 @@
-import type { Severity } from '../analyze/rule.types';
+import type { Confidence, Severity } from '../analyze/rule.types';
 import type {
   ColumnSpec,
   FindingRow,
@@ -7,6 +7,8 @@ import type {
   SheetRow,
 } from './report.types';
 import { ruleFamily } from './report.sections';
+import type { ScoreResult } from './report.score';
+import type { ActionSummary } from './report.actions';
 
 /**
  * Phase 5 Summary + catch-all builders (engine-owned, Wave 2A). PURE: plain
@@ -42,31 +44,99 @@ export function countLowConfidence(findings: FindingRow[]): number {
   return findings.filter((f) => f.confidence !== 'high').length;
 }
 
+// ── Severity / confidence ranking (single-sourced for the dedup grouping) ───
+
+/** Severity rank: lower = more severe. Used to pick the DOMINANT severity. */
+const SEVERITY_RANK: Record<Severity, number> = {
+  critical: 0,
+  high: 1,
+  medium: 2,
+  low: 3,
+  info: 4,
+};
+
+/** Confidence rank: lower = less trustworthy. Used to pick the MINIMUM confidence. */
+const CONFIDENCE_RANK: Record<Confidence, number> = {
+  high: 2,
+  medium: 1,
+  low: 0,
+};
+
+/** The site-wide root-cause placeholder key (matches report.sections SITE_WIDE). */
+export const SITE_WIDE_KEY = '(site-wide)';
+
 /**
- * Compute the de-duplicated issue count (Item 13).
+ * One de-duplicated issue: a `(ruleFamily, rootCauseKey)` group of findings that
+ * share a single root cause. This is the canonical "what is one issue" unit
+ * consumed by BOTH the distinct-issue count / score (plan 12) and the action
+ * plan (plan 13) — single-sourced so the headline numbers are provably
+ * consistent.
  *
- * Groups findings by (ruleFamily, rootCauseKey) to collapse:
- *  - H1 family (meta.h1.*): for a given URL all meta.h1.* findings count as ONE
- *    issue (one page has an H1 problem, regardless of how many sub-rules fired).
- *  - Perf rollups (perf.*): each page+strategy combination counts as ONE issue
- *    per rule family, collapsing perf.lcp + perf.cls-inp + perf.lab-score etc. on
- *    the same page into a single "page has a perf issue" entry per URL.
- *  - All other rules: each (ruleFamily, url) pair is ONE distinct issue.
- *
- * "root-cause key" = `url ?? '(site-wide)'`. This ensures two pages with
- * different URLs that both trigger `meta.title.duplicate` count as 2 distinct
- * issues (different pages have different duplicate-title issues).
- *
- * Returns the count of unique (family, rootCauseKey) pairs.
+ * - `family` = `ruleFamily(ruleId)` (first two dotted segments).
+ * - `rootCauseKey` = `url ?? '(site-wide)'`.
+ * - `severity` = the DOMINANT (max) severity across the group's members.
+ * - `confidence` = the MINIMUM (weakest) confidence across the group's members
+ *   (a group is only as trustworthy as its weakest member).
  */
-export function distinctIssueCount(findings: FindingRow[]): number {
-  const seen = new Set<string>();
+export interface IssueGroup {
+  family: string;
+  rootCauseKey: string;
+  ruleIds: string[];
+  severity: Severity;
+  confidence: Confidence;
+  findings: FindingRow[];
+}
+
+/**
+ * Group findings by `(ruleFamily, rootCauseKey)` into de-duplicated issue
+ * groups (TD-3 / TD-13). This is the SINGLE SOURCE OF TRUTH for "what is one
+ * issue": the H1 family (66 raw findings on one URL) collapses into ONE group,
+ * per-page perf rollups collapse per family, and site-wide findings group under
+ * the `(site-wide)` key.
+ *
+ * For each group the dominant (max) severity and minimum (weakest) confidence
+ * are precomputed so downstream consumers (score, actions) never re-derive
+ * them. Group insertion order follows first-seen finding order, keeping output
+ * deterministic for byte-stable snapshots. PURE.
+ */
+export function groupByRootCause(findings: FindingRow[]): IssueGroup[] {
+  const groups = new Map<string, IssueGroup>();
   for (const f of findings) {
     const family = ruleFamily(f.ruleId);
-    const rootKey = f.url ?? '(site-wide)';
-    seen.add(`${family}\0${rootKey}`);
+    const rootCauseKey = f.url ?? SITE_WIDE_KEY;
+    const key = `${family}\0${rootCauseKey}`;
+    const existing = groups.get(key);
+    if (existing) {
+      existing.findings.push(f);
+      if (!existing.ruleIds.includes(f.ruleId)) existing.ruleIds.push(f.ruleId);
+      if (SEVERITY_RANK[f.severity] < SEVERITY_RANK[existing.severity]) {
+        existing.severity = f.severity;
+      }
+      if (CONFIDENCE_RANK[f.confidence] < CONFIDENCE_RANK[existing.confidence]) {
+        existing.confidence = f.confidence;
+      }
+    } else {
+      groups.set(key, {
+        family,
+        rootCauseKey,
+        ruleIds: [f.ruleId],
+        severity: f.severity,
+        confidence: f.confidence,
+        findings: [f],
+      });
+    }
   }
-  return seen.size;
+  return [...groups.values()];
+}
+
+/**
+ * Compute the de-duplicated issue count (Item 13). Thin wrapper over
+ * {@link groupByRootCause} — the count is simply the number of distinct
+ * `(ruleFamily, rootCauseKey)` groups. Kept as a named export so existing
+ * callers (Summary sheet, API) need no change.
+ */
+export function distinctIssueCount(findings: FindingRow[]): number {
+  return groupByRootCause(findings).length;
 }
 
 /** The fixed column spec for the Summary sheet's key/value + table layout. */
@@ -93,9 +163,26 @@ export const SUMMARY_SHEET_NAME = 'Summary';
 export const OTHER_SHEET_NAME = 'Other';
 
 /**
+ * Extra inputs that let the Summary sheet lead with an executive narrative
+ * (plan 13 §3.4): the computed score, the Top-N actions (top-3 wins), and the
+ * not-assessed category list. All optional so existing callers/tests that don't
+ * pass them keep the original three-block layout.
+ */
+export interface SummaryExtras {
+  score?: ScoreResult | null;
+  topActions?: ActionSummary[];
+  /** Human labels of score categories that are `assessed:false`. */
+  notAssessed?: string[];
+}
+
+/**
  * Build the Summary sheet rows from the loaded findings + section registry +
- * context. Three stacked blocks, separated by blank rows:
+ * context. Stacked blocks, separated by blank rows:
  *
+ *  0. (optional) Executive summary narrative: SEO health headline, the
+ *     "N distinct issues across M findings" phrasing, the top-3 wins, and the
+ *     not-assessed one-liner (plan 13 §3.4). Rendered ONLY when `extras` is
+ *     supplied — keeps the legacy three-block layout for callers that omit it.
  *  1. Audit metadata: start URL, audit id, status, generated-at, total findings,
  *     the de-duplicated issue count (Item 13), and the low-confidence findings
  *     count (findings where confidence !== 'high').
@@ -110,11 +197,45 @@ export function buildSummaryRows(
   findings: FindingRow[],
   sections: ReportSection[],
   ctx: ReportContext,
+  extras?: SummaryExtras,
 ): SheetRow[] {
   const rows: SheetRow[] = [];
   const bySeverity = countBySeverity(findings);
   const distinctIssues = distinctIssueCount(findings);
   const lowConfidenceCount = countLowConfidence(findings);
+
+  // ── Block 0: executive summary narrative (optional) ───────────────────────
+  if (extras) {
+    rows.push({ field: 'Executive summary', value: '', count: null });
+    if (extras.score) {
+      const band = scoreBandLabel(extras.score.overall);
+      rows.push({
+        field: 'SEO health score',
+        value: `${extras.score.overall} / 100 (${band})`,
+        count: null,
+      });
+    }
+    rows.push({
+      field: 'Issues',
+      value: `${distinctIssues} distinct issues across ${findings.length} findings`,
+      count: null,
+    });
+    const wins = (extras.topActions ?? []).slice(0, 3);
+    if (wins.length > 0) {
+      rows.push({ field: 'Top wins', value: '', count: null });
+      wins.forEach((a, i) => {
+        rows.push({ field: `  #${i + 1}`, value: a.title, count: null });
+      });
+    }
+    if (extras.notAssessed && extras.notAssessed.length > 0) {
+      rows.push({
+        field: 'Not assessed',
+        value: extras.notAssessed.join(', '),
+        count: null,
+      });
+    }
+    rows.push(blankRow());
+  }
 
   // ── Block 1: audit metadata ───────────────────────────────────────────────
   rows.push({ field: 'Start URL', value: ctx.audit.startUrl, count: null });
@@ -160,6 +281,13 @@ export function buildSummaryRows(
   }
 
   return rows;
+}
+
+/** Score-band label for the Summary headline (mirrors report.score.scoreBand). */
+function scoreBandLabel(n: number): string {
+  if (n >= 80) return 'good';
+  if (n >= 50) return 'fair';
+  return 'poor';
 }
 
 /**

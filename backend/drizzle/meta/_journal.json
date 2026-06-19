@@ -64,6 +64,13 @@
       "when": 1781207408232,
       "tag": "0008_majestic_hannibal_king",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1781868395644,
+      "tag": "0009_tan_skin",
+      "breakpoints": true
     }
   ]
 }

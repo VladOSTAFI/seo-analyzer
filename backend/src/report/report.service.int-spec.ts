@@ -9,6 +9,13 @@ import { audits } from '../db/schema';
 import { ReportService } from './report.service';
 import { REPORT_SECTIONS } from './report.sections';
 import { SUMMARY_SHEET_NAME } from './report.summary';
+
+/**
+ * The three always-rendered report-layer sheets added in plans 12/13:
+ * "SEO Score", "Action Plan", and "By Page". They render regardless of
+ * findings/coverage, so the engine emits Summary + sections + these three.
+ */
+const EXTRA_REPORT_SHEETS = 3;
 import {
   cleanupAudit,
   closePool,
@@ -87,7 +94,7 @@ describe('ReportService (integration)', () => {
     expect(summary.bySeverity).toEqual({ critical: 1, high: 1, medium: 1, low: 1, info: 1 });
 
     // Worksheet count: Summary + every section (no uncovered → no Other sheet).
-    expect(summary.sheets).toBe(REPORT_SECTIONS.length + 1);
+    expect(summary.sheets).toBe(REPORT_SECTIONS.length + 1 + EXTRA_REPORT_SHEETS);
 
     // Parse the workbook BACK and assert structure.
     const wb = new ExcelJS.Workbook();
@@ -104,7 +111,7 @@ describe('ReportService (integration)', () => {
     expect(Number(totalRow!.getCell(3).value)).toBe(seeded.length);
 
     // Worksheet count parsed-back matches.
-    expect(wb.worksheets.length).toBe(REPORT_SECTIONS.length + 1);
+    expect(wb.worksheets.length).toBe(REPORT_SECTIONS.length + 1 + EXTRA_REPORT_SHEETS);
 
     // Every section sheet exists with a header row matching its column headers.
     for (const section of REPORT_SECTIONS) {
@@ -138,7 +145,7 @@ describe('ReportService (integration)', () => {
     expect(summary.totalFindings).toBe(0);
     expect(summary.bySeverity).toEqual({ critical: 0, high: 0, medium: 0, low: 0, info: 0 });
     // Summary + sections, no Other sheet.
-    expect(summary.sheets).toBe(REPORT_SECTIONS.length + 1);
+    expect(summary.sheets).toBe(REPORT_SECTIONS.length + 1 + EXTRA_REPORT_SHEETS);
 
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.readFile(summary.reportPath);

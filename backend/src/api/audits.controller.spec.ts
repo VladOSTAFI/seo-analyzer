@@ -47,6 +47,8 @@ function detail(overrides: Partial<AuditDetailDto> = {}): AuditDetailDto {
     progress: null,
     coverage: null,
     distinctIssues: 0,
+    score: null,
+    topActions: [],
     ...overrides,
   };
 }

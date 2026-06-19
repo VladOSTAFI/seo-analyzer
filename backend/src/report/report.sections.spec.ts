@@ -155,7 +155,7 @@ describe('buildRows mappers', () => {
       hops: null,
       isLoop: null,
     });
-    expect(rows[0].recommendation).toContain('final URL');
+    expect(rows[0].recommendation).toContain('final destination URL');
     expect(rows[1]).toMatchObject({ hops: 3, isLoop: true, href: null, targetStatusCode: null });
     expect(rows[1].recommendation).toContain('chain');
   });
@@ -192,7 +192,7 @@ describe('buildRows mappers', () => {
       CTX,
     );
     expect(rows[0]).toMatchObject({ issue: 'missing', title: null, count: null });
-    expect(rows[0].recommendation).toContain('Add');
+    expect(rows[0].recommendation).toContain('<title>');
     expect(rows[1]).toMatchObject({ issue: 'duplicate', title: 'Home', count: 4 });
     expect(rows[2]).toMatchObject({ issue: 'multiple', title: 'One, Two', count: 2 });
   });
