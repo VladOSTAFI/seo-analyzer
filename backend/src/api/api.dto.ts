@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { severity as severityEnum } from '../db/schema/enums';
+import type { ScanProfile } from '../db/schema/audits';
 import { DEFAULT_LIMIT, MAX_LIMIT } from './api.types';
 
 /**
@@ -8,10 +9,18 @@ import { DEFAULT_LIMIT, MAX_LIMIT } from './api.types';
  * Severity values come straight from the pgEnum so they never drift.
  */
 
-/** `POST /audits` body. URL shape is re-checked by parseStartUrl (http/https). */
+/** The two scan-profile literals, single-sourced for the Zod enum below. */
+const SCAN_PROFILES = ['standard', 'full'] as const satisfies readonly ScanProfile[];
+
+/**
+ * `POST /audits` body. URL shape is re-checked by parseStartUrl (http/https).
+ * `profile` is OPTIONAL in the request and defaults to `'standard'` (the fast
+ * audit); a caller opts into the slower image/external-link probes with `'full'`.
+ */
 export const CreateAuditBody = z
   .object({
     url: z.string({ required_error: 'url is required' }).trim().min(1, 'url must not be empty'),
+    profile: z.enum(SCAN_PROFILES).default('standard'),
   })
   .strict();
 export type CreateAuditBody = z.infer<typeof CreateAuditBody>;

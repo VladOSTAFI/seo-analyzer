@@ -10,6 +10,7 @@ import {
 import type {
   AuditDetailDto,
   AuditDto,
+  AuditProfile,
   AuditStatus,
   AuthUser,
   FindingDto,
@@ -183,16 +184,22 @@ export function listFindings(
  * the Bearer token (so ownership is automatic) and runs the pipeline
  * fire-and-forget, returning `{ id, status: 'created' }`.
  *
+ * `profile` selects the audit depth: `'standard'` (fast, default) or `'full'`
+ * (slower — also checks image weight & external links). It is only sent when
+ * provided, so a backend that doesn't yet understand the field falls back to
+ * its own default (standard), keeping partial deploys safe.
+ *
  * SSRF NOTE: this method does NOT itself validate the target host — callers
  * MUST run `rejectUnsafeAuditUrl` / `startAuditSchema` (see
  * `lib/validation/audit-url.ts`) first, as the backend has no host validation.
  */
 export function createAudit(
   url: string,
+  profile?: AuditProfile,
 ): Promise<{ id: string; status: AuditStatus }> {
   return request<{ id: string; status: AuditStatus }>("/audits", {
     method: "POST",
-    body: JSON.stringify({ url }),
+    body: JSON.stringify(profile ? { url, profile } : { url }),
   });
 }
 

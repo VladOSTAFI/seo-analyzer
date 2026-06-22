@@ -44,6 +44,15 @@ export type AuditStatus =
 export const isTerminal = (s: AuditStatus): boolean =>
   s === "done" || s === "failed";
 
+// ── Audit profile ─────────────────────────────────────────────────────────────
+
+/**
+ * Audit depth for `POST /audits`: `standard` (fast, the default) or `full`
+ * (slower — also checks image weight & external links). Mirrors the backend's
+ * optional `profile` field; absent → backend defaults to `standard`.
+ */
+export type AuditProfile = "standard" | "full";
+
 // ── Coverage manifest (Item 12) ──────────────────────────────────────────────
 
 /**

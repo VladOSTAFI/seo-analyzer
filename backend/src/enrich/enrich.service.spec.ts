@@ -68,6 +68,10 @@ function makeDeps(
     verify?: typeof DEFAULT_VERIFY;
     externalProbe?: typeof DEFAULT_EXTERNAL_PROBE;
     imageProbe?: typeof DEFAULT_IMAGE_PROBE;
+    // Scan profile carried on the audit returned by assertExists. Defaults to
+    // 'full' so the existing "heavy probes ARE called" assertions hold; the
+    // standard-scan cases below pass 'standard' to assert the SKIP path.
+    scanProfile?: 'standard' | 'full';
   } = {},
 ) {
   const pageCount = opts.pageCount ?? 5;
@@ -75,6 +79,7 @@ function makeDeps(
   const verify = opts.verify ?? DEFAULT_VERIFY;
   const externalProbe = opts.externalProbe ?? DEFAULT_EXTERNAL_PROBE;
   const imageProbe = opts.imageProbe ?? DEFAULT_IMAGE_PROBE;
+  const scanProfile = opts.scanProfile ?? 'full';
 
   // The tx executor: UPDATEs resolve to an empty result; the eight summary
   // SELECTs (collectSummary) resolve to the canned counts in issue order. A
@@ -106,7 +111,9 @@ function makeDeps(
   const db = { execute: dbExecute, transaction } as unknown as Database;
 
   const auditRepo = {
-    assertExists: jest.fn().mockResolvedValue({ id: AUDIT_ID, startUrl: 'https://example.com/' }),
+    assertExists: jest
+      .fn()
+      .mockResolvedValue({ id: AUDIT_ID, startUrl: 'https://example.com/', scanProfile }),
     setStatus: jest.fn().mockResolvedValue(undefined),
     markFailed: jest.fn().mockResolvedValue(undefined),
   } as unknown as jest.Mocked<AuditRepository>;
@@ -316,5 +323,46 @@ describe('EnrichService.enrich', () => {
 
     await expect(service.enrich(AUDIT_ID)).resolves.toBeDefined();
     expect(auditRepo.markFailed).not.toHaveBeenCalled();
+  });
+
+  describe('scan profile gate', () => {
+    it('full scan: both SLOW probes ARE called', async () => {
+      const { db, auditRepo, linkVerifier } = makeDeps({ scanProfile: 'full' });
+      const service = new EnrichService(db, auditRepo, linkVerifier);
+
+      await service.enrich(AUDIT_ID);
+
+      expect(linkVerifier.probeExternalLinks).toHaveBeenCalledWith(AUDIT_ID);
+      expect(linkVerifier.probeImages).toHaveBeenCalledWith(AUDIT_ID);
+      // The cheap cert probe always runs.
+      expect(linkVerifier.verifyCerts).toHaveBeenCalledWith(AUDIT_ID);
+    });
+
+    it('standard scan: the two SLOW probes are NOT called and their summary fields are zeroed', async () => {
+      const externalProbe = { externalsVerified: 99, truncated: true };
+      const imageProbe = { imagesVerified: 99, truncated: true };
+      const { db, auditRepo, linkVerifier } = makeDeps({
+        scanProfile: 'standard',
+        externalProbe,
+        imageProbe,
+      });
+      const service = new EnrichService(db, auditRepo, linkVerifier);
+
+      const summary = await service.enrich(AUDIT_ID);
+
+      // SLOW probes skipped entirely.
+      expect(linkVerifier.probeExternalLinks).not.toHaveBeenCalled();
+      expect(linkVerifier.probeImages).not.toHaveBeenCalled();
+      // Their summary fields are zeroed (NOT the canned probe results above).
+      expect(summary.externalsVerified).toBe(0);
+      expect(summary.externalsTruncated).toBe(false);
+      expect(summary.imagesVerified).toBe(0);
+      expect(summary.imagesTruncated).toBe(false);
+      // The cheap broken-link verify + cert probe still run on a standard scan.
+      expect(linkVerifier.verifyBrokenLinks).toHaveBeenCalledWith(AUDIT_ID);
+      expect(linkVerifier.verifyCerts).toHaveBeenCalledWith(AUDIT_ID);
+      // Standard scan must not fail enrich.
+      expect(auditRepo.markFailed).not.toHaveBeenCalled();
+    });
   });
 });

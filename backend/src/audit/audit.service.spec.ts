@@ -90,7 +90,9 @@ function buildService() {
   } as unknown as jest.Mocked<ReportService>;
 
   const auditRepo = {
-    assertExists: jest.fn().mockResolvedValue({ id: AUDIT_ID, startUrl: 'https://x.test/' }),
+    assertExists: jest
+      .fn()
+      .mockResolvedValue({ id: AUDIT_ID, startUrl: 'https://x.test/', scanProfile: 'standard' }),
     setStatus: jest.fn().mockResolvedValue(undefined),
     markFailed: jest.fn().mockResolvedValue(undefined),
     // Item 14: progress tracking — best-effort, must not break the pipeline.
@@ -214,6 +216,7 @@ describe('AuditService.runAll', () => {
     // Basic shape of the coverage manifest.
     expect(typeof manifest.pagesCrawled).toBe('number');
     expect(manifest.pagesCrawled).toBe(CRAWL.pages);
+    expect(manifest.scanProfile).toBe('standard');
     expect(typeof manifest.crawlCap).toBe('number');
     expect(typeof manifest.capHit).toBe('boolean');
     expect(manifest.externalLinks).toBeDefined();
@@ -278,7 +281,11 @@ describe('AuditService.create', () => {
     expect(id).toBe(AUDIT_ID);
     expect(insert).toHaveBeenCalledTimes(1);
     // The insert carries BOTH the normalized URL and the owning principal.
-    expect(values).toHaveBeenCalledWith({ startUrl: 'https://example.com/', ownerId: OWNER_ID });
+    expect(values).toHaveBeenCalledWith({
+      startUrl: 'https://example.com/',
+      ownerId: OWNER_ID,
+      scanProfile: 'standard',
+    });
   });
 
   it('passes a null ownerId straight through (the unauthenticated CLI path)', async () => {
@@ -288,7 +295,23 @@ describe('AuditService.create', () => {
 
     expect(id).toBe(AUDIT_ID);
     expect(insert).toHaveBeenCalledTimes(1);
-    expect(values).toHaveBeenCalledWith({ startUrl: 'https://example.com/', ownerId: null });
+    expect(values).toHaveBeenCalledWith({
+      startUrl: 'https://example.com/',
+      ownerId: null,
+      scanProfile: 'standard',
+    });
+  });
+
+  it('threads an explicit scan profile into the insert payload', async () => {
+    const { service, values } = buildService();
+
+    await service.create('https://example.com', OWNER_ID, 'full');
+
+    expect(values).toHaveBeenCalledWith({
+      startUrl: 'https://example.com/',
+      ownerId: OWNER_ID,
+      scanProfile: 'full',
+    });
   });
 
   it('rejects an invalid URL before inserting a row', async () => {
@@ -319,7 +342,11 @@ describe('AuditService.createAndRun', () => {
 
     // Inserted with the normalized start URL payload AND the owner (Phase A3).
     expect(insert).toHaveBeenCalledTimes(1);
-    expect(values).toHaveBeenCalledWith({ startUrl: 'https://example.com/', ownerId: OWNER_ID });
+    expect(values).toHaveBeenCalledWith({
+      startUrl: 'https://example.com/',
+      ownerId: OWNER_ID,
+      scanProfile: 'standard',
+    });
 
     // Drove the pipeline against the inserted id.
     expect(crawl.crawl).toHaveBeenCalledWith(AUDIT_ID);
@@ -336,7 +363,11 @@ describe('AuditService.createAndRun', () => {
 
     await service.createAndRun('https://example.com', null);
 
-    expect(values).toHaveBeenCalledWith({ startUrl: 'https://example.com/', ownerId: null });
+    expect(values).toHaveBeenCalledWith({
+      startUrl: 'https://example.com/',
+      ownerId: null,
+      scanProfile: 'standard',
+    });
   });
 });
 

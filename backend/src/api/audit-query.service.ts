@@ -17,6 +17,7 @@ import type {
 } from './api.types';
 import type { CoverageManifest, FindingRow } from '../report/report.types';
 import type { ScoreResult } from '../report/report.score';
+import type { ScanProfile } from '../db/schema/audits';
 import type { ActionSummary } from './api.types';
 
 /**
@@ -102,7 +103,7 @@ export class AuditQueryService {
     const scope = this.ownerScope(user);
 
     const auditResult = await this.db.execute(sql`
-      select id, start_url, status, failed_stage, report_path, progress, coverage, score,
+      select id, start_url, status, failed_stage, report_path, scan_profile, progress, coverage, score,
              created_at, updated_at
       from audits
       where id = ${id} and ${scope}
@@ -160,6 +161,7 @@ export class AuditQueryService {
 
     return {
       ...this.toAuditDto(auditRow),
+      scanProfile: (auditRow.scan_profile as ScanProfile | null) ?? 'standard',
       findingsTotal,
       bySeverity,
       progress,

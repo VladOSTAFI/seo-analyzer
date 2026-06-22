@@ -11,6 +11,7 @@ import {
 import { AUDITS_HREF } from "@/lib/constants";
 import { DEFAULT_LOCALE, isLocale, localeHref } from "@/lib/i18n/config";
 import { getDashboard } from "@/lib/copy/dashboard";
+import type { AuditProfile } from "@/lib/api/types";
 import {
   type StartAuditState,
 } from "@/app/[locale]/(dashboard)/audits/start-state";
@@ -25,6 +26,10 @@ import {
  *      server-side, AUTHORITATIVELY, before touching the backend.
  *   3. The backend then stamps `ownerId` from the Bearer token and runs the
  *      pipeline fire-and-forget.
+ *
+ * The `profile` field (`standard` | `full`) is read from the clicked submit
+ * button; anything unexpected coerces to `standard`, so an untrusted/raw POST
+ * can never escalate the audit depth.
  *
  * On success we `revalidatePath` the (locale-correct) list so the new audit
  * appears, and return the new id; the client toasts + routes to the detail page.
@@ -59,9 +64,13 @@ export async function startAuditAction(
     };
   }
 
+  // Audit depth from the clicked submit button; anything else → standard.
+  const profile: AuditProfile =
+    formData.get("profile") === "full" ? "full" : "standard";
+
   // 3. Hand off to the backend (Bearer attached by the client; stamps ownerId).
   try {
-    const created = await createAudit(parsed.data.url);
+    const created = await createAudit(parsed.data.url, profile);
     revalidatePath(localeHref(AUDITS_HREF, locale));
     return { status: "success", auditId: created.id };
   } catch (error) {

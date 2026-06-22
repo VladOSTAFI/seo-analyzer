@@ -32,7 +32,7 @@ function scalarCount(result: { rows: Record<string, unknown>[] }): number {
  * and run inside ONE transaction, so a partial failure leaves the prior
  * enrichment intact and a re-run reproduces identical results (idempotent).
  *
- * AFTER that transaction commits, three **live verification/probe passes** run
+ * AFTER that transaction commits, several **live verification/probe passes** run
  * sequentially, each best-effort (never fails enrich):
  *
  * 1. **Broken-link verification** ({@link LinkVerifierService.verifyBrokenLinks}):
@@ -42,17 +42,27 @@ function scalarCount(result: { rows: Record<string, unknown>[] }): number {
  * 2. **External-link probe** ({@link LinkVerifierService.probeExternalLinks}):
  *    probes external hrefs whose `target_status_code` is still NULL (never
  *    visited by the crawl). Populates `target_status_code` and `is_broken` so
- *    the `links.broken-external` rule has live data. Gated by
- *    EXTERNAL_VERIFY_ENABLED (default false).
+ *    the `links.broken-external` rule has live data.
  *
  * 3. **Image probe** ({@link LinkVerifierService.probeImages}):
  *    probes image srcs whose `status_code` is still NULL. Populates
- *    `images.status_code` so the `image.broken` rule has live data. Gated by
- *    IMAGE_VERIFY_ENABLED (default false).
+ *    `images.status_code` so the `image.broken` rule has live data.
  *
- * All three passes run OUTSIDE the transaction (see the broken-link pass
- * docblock for the rationale). Any failure in any pass is caught and logged; it
- * cannot fail the enrich stage.
+ * SCAN-PROFILE GATE: the two SLOW probes — the external-link probe (2) and the
+ * image probe (3) — run ONLY when the audit's `scanProfile === 'full'`. On a
+ * `standard` scan (the default) they are skipped entirely and their summary
+ * fields are zeroed (externalsVerified=0/externalsTruncated=false,
+ * imagesVerified=0/imagesTruncated=false), matching the shape those passes return
+ * when env-disabled. The existing per-probe env flags (EXTERNAL_VERIFY_ENABLED /
+ * IMAGE_VERIFY_ENABLED) stay as an ops-level kill-switch INSIDE the verifier — so
+ * a heavy probe effectively runs iff `profile === 'full'` AND its env flag is on.
+ *
+ * 4. **TLS cert probe** ({@link LinkVerifierService.verifyCerts}): cheap, so it
+ *    ALWAYS runs regardless of profile (still gated by SECURITY_VERIFY_ENABLED).
+ *
+ * All passes run OUTSIDE the transaction (see the broken-link pass docblock for
+ * the rationale). Any failure in any pass is caught and logged; it cannot fail
+ * the enrich stage.
  *
  * Status semantics mirror Phase 1: status is set to `enriching` at the start and
  * LEFT at `enriching` on success — `enriching` is the settled "enriched" state
@@ -71,7 +81,9 @@ export class EnrichService {
 
   async enrich(auditId: string): Promise<EnrichSummary> {
     const startedAt = Date.now();
-    await this.auditRepo.assertExists(auditId);
+    const audit = await this.auditRepo.assertExists(auditId);
+    // The two SLOW probes run only on a `full` scan; a `standard` scan skips them.
+    const isFullScan = audit.scanProfile === 'full';
 
     // Guard: enrichment is meaningless without crawl output. A zero-page count
     // almost always means `audit:crawl` was never run for this id.
@@ -85,7 +97,9 @@ export class EnrichService {
     }
 
     await this.auditRepo.setStatus(auditId, 'enriching');
-    this.logger.log(`Enrich start audit=${auditId} pages=${pageCount}`);
+    this.logger.log(
+      `Enrich start audit=${auditId} pages=${pageCount} profile=${audit.scanProfile}`,
+    );
 
     try {
       // (1) Set-based enrichment + initial summary snapshot — committed in ONE
@@ -118,27 +132,44 @@ export class EnrichService {
         );
       }
 
-      // (4) External-link probe pass — probes external hrefs with NULL
-      // target_status_code so broken-external findings have live data.
-      // Best-effort; never throws. Gated by EXTERNAL_VERIFY_ENABLED.
-      const externalProbe = await this.linkVerifier.probeExternalLinks(auditId);
-      summary.externalsVerified = externalProbe.externalsVerified;
-      summary.externalsTruncated = externalProbe.truncated;
+      // (4) External-link probe pass (SLOW) — probes external hrefs with NULL
+      // target_status_code so broken-external findings have live data. Runs ONLY
+      // on a `full` scan; on `standard` it is skipped and its summary fields are
+      // zeroed (same shape probeExternalLinks returns when env-disabled). The
+      // probe itself still honors EXTERNAL_VERIFY_ENABLED as an ops kill-switch.
+      if (isFullScan) {
+        const externalProbe = await this.linkVerifier.probeExternalLinks(auditId);
+        summary.externalsVerified = externalProbe.externalsVerified;
+        summary.externalsTruncated = externalProbe.truncated;
+      } else {
+        this.logger.log(`External probe skipped (standard scan) audit=${auditId}`);
+        summary.externalsVerified = 0;
+        summary.externalsTruncated = false;
+      }
 
-      // (5) Image probe pass — probes image srcs with NULL status_code.
-      // Best-effort; never throws. Gated by IMAGE_VERIFY_ENABLED.
-      const imageProbe = await this.linkVerifier.probeImages(auditId);
-      summary.imagesVerified = imageProbe.imagesVerified;
-      summary.imagesTruncated = imageProbe.truncated;
+      // (5) Image probe pass (SLOW) — probes image srcs with NULL status_code.
+      // Runs ONLY on a `full` scan; on `standard` it is skipped and its summary
+      // fields are zeroed. The probe still honors IMAGE_VERIFY_ENABLED inside.
+      if (isFullScan) {
+        const imageProbe = await this.linkVerifier.probeImages(auditId);
+        summary.imagesVerified = imageProbe.imagesVerified;
+        summary.imagesTruncated = imageProbe.truncated;
+      } else {
+        this.logger.log(`Image probe skipped (standard scan) audit=${auditId}`);
+        summary.imagesVerified = 0;
+        summary.imagesTruncated = false;
+      }
 
       // (6) TLS cert probe — one connection per distinct HTTPS host, writes
-      // pages.cert_valid / cert_days_to_expiry for the `security.cert` rule.
-      // Best-effort; never throws. Gated by SECURITY_VERIFY_ENABLED (default OFF).
+      // pages.cert_valid / pages.cert_days_to_expiry for the `security.cert` rule.
+      // CHEAP, so it ALWAYS runs regardless of scan profile. Best-effort; never
+      // throws. Still gated by SECURITY_VERIFY_ENABLED (default OFF).
       const certProbe = await this.linkVerifier.verifyCerts(auditId);
 
       const elapsedMs = Date.now() - startedAt;
       this.logger.log(
-        `Enrich done audit=${auditId} links=${summary.linksResolved} ` +
+        `Enrich done audit=${auditId} profile=${audit.scanProfile} ` +
+          `links=${summary.linksResolved} ` +
           `(redirect=${summary.redirectLinks}, broken=${summary.brokenLinks}) ` +
           `verified=${summary.linksVerified} false_positives_cleared=${summary.falsePositivesCleared} ` +
           `verify_inconclusive=${summary.verifyInconclusive} ` +
@@ -239,8 +270,8 @@ export class EnrichService {
    * correct — e.g. an image URL that was itself queued and fetched). Reset then
    * set, mirroring link resolution, so it stays idempotent.
    *
-   * A live HTTP HEAD-check pass (IMAGE_VERIFY_ENABLED) is now a separate
-   * best-effort step run after this transaction — see {@link probeImages}.
+   * A live HTTP HEAD-check pass (the image probe) is now a separate best-effort
+   * step run after this transaction — see {@link probeImages} (full scans only).
    */
   private async resolveImageStatus(tx: Executor, auditId: string): Promise<void> {
     await tx.execute(sql`
@@ -274,7 +305,7 @@ export class EnrichService {
    * `verifyInconclusive`) are filled in by the caller AFTER the live pass; here
    * they are seeded to zero so the summary is complete inside the transaction.
    * Similarly, the external/image probe counts are seeded to zero here and filled
-   * in post-transaction.
+   * in post-transaction (and LEFT at zero on a standard scan).
    */
   private async collectSummary(tx: Executor, auditId: string): Promise<EnrichSummary> {
     const linksResolved = scalarCount(
@@ -341,7 +372,8 @@ export class EnrichService {
       linksVerified: 0,
       falsePositivesCleared: 0,
       verifyInconclusive: 0,
-      // Filled in post-transaction by the external/image probe passes.
+      // Filled in post-transaction by the external/image probe passes (full scan
+      // only); LEFT at zero on a standard scan.
       externalsVerified: 0,
       externalsTruncated: false,
       imagesVerified: 0,

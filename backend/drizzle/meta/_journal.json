@@ -85,6 +85,13 @@
       "when": 1781877721421,
       "tag": "0011_past_moon_knight",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1781883152881,
+      "tag": "0012_stiff_scourge",
+      "breakpoints": true
     }
   ]
 }
