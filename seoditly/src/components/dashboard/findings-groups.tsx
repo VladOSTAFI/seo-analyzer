@@ -66,8 +66,53 @@ function groupByRule(items: FindingDto[], locale: Locale): RuleGroup[] {
 
 const URL_PREVIEW = 5;
 
+// Detail keys rendered specially (as URL links) or deliberately hidden — kept
+// out of the generic key/value DetailLine. `contentHash` is a raw hash with no
+// user value; `duplicateUrls`/`nearUrl` are surfaced as labelled link lists.
+const SPECIAL_DETAIL_KEYS = new Set([
+  "contentHash",
+  "duplicateUrls",
+  "nearUrl",
+]);
+
+function UrlLink({ url }: { url: string }) {
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noreferrer"
+      className="inline-flex max-w-full items-center gap-1 truncate font-mono text-xs text-primary underline-offset-4 hover:underline"
+      title={url}
+    >
+      <span className="truncate">{stripScheme(url)}</span>
+      <ExternalLink className="size-3 shrink-0 opacity-70" aria-hidden />
+    </a>
+  );
+}
+
+/** A labelled list of related URLs (e.g. the pages that duplicate the origin). */
+function RelatedUrls({ label, urls }: { label: string; urls: string[] }) {
+  if (urls.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className="text-[11px] font-medium text-muted-foreground/70">
+        {label}
+      </span>
+      <ul className="flex flex-col gap-0.5 border-l border-border/60 pl-2.5">
+        {urls.map((u) => (
+          <li key={u}>
+            <UrlLink url={u} />
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function DetailLine({ detail }: { detail: Record<string, unknown> }) {
-  const entries = Object.entries(detail ?? {});
+  const entries = Object.entries(detail ?? {}).filter(
+    ([k]) => !SPECIAL_DETAIL_KEYS.has(k),
+  );
   if (entries.length === 0) return null;
   return (
     <span className="font-mono text-xs text-muted-foreground">
@@ -84,6 +129,12 @@ function DetailLine({ detail }: { detail: Record<string, unknown> }) {
   );
 }
 
+function asStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((v): v is string => typeof v === "string")
+    : [];
+}
+
 function humanizeKey(key: string): string {
   const spaced = key
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
@@ -94,31 +145,33 @@ function humanizeKey(key: string): string {
 
 function AffectedRow({
   finding,
-  siteWide,
+  strings,
 }: {
   finding: FindingDto;
-  siteWide: string;
+  strings: FindingsStrings;
 }) {
-  const hasDetail = Object.keys(finding.detail ?? {}).length > 0;
+  const detail = finding.detail ?? {};
+  // dupe.content carries the URLs sharing identical content; dupe.near-content
+  // carries a single near-duplicate partner. Surface both as link lists.
+  const duplicateUrls = asStringArray(detail.duplicateUrls);
+  const nearUrl = typeof detail.nearUrl === "string" ? detail.nearUrl : null;
+  const hasGenericDetail = Object.keys(detail).some(
+    (k) => !SPECIAL_DETAIL_KEYS.has(k),
+  );
   return (
-    <li className="flex flex-col gap-0.5 border-t border-border/60 px-4 py-2.5 first:border-t-0">
+    <li className="flex flex-col gap-1.5 border-t border-border/60 px-4 py-2.5 first:border-t-0">
       {finding.url ? (
-        <a
-          href={finding.url}
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex max-w-full items-center gap-1 truncate font-mono text-xs text-primary underline-offset-4 hover:underline"
-          title={finding.url}
-        >
-          <span className="truncate">{stripScheme(finding.url)}</span>
-          <ExternalLink className="size-3 shrink-0 opacity-70" aria-hidden />
-        </a>
+        <UrlLink url={finding.url} />
       ) : (
         <span className="font-mono text-xs text-muted-foreground/70">
-          {siteWide}
+          {strings.siteWide}
         </span>
       )}
-      {hasDetail && <DetailLine detail={finding.detail} />}
+      {hasGenericDetail && <DetailLine detail={detail} />}
+      <RelatedUrls label={strings.duplicatedAt} urls={duplicateUrls} />
+      {nearUrl && (
+        <RelatedUrls label={strings.nearDuplicateOf} urls={[nearUrl]} />
+      )}
     </li>
   );
 }
@@ -187,7 +240,7 @@ function RuleGroupCard({
         </p>
         <ul id={regionId} className="px-1 py-1">
           {visible.map((f) => (
-            <AffectedRow key={f.id} finding={f} siteWide={strings.siteWide} />
+            <AffectedRow key={f.id} finding={f} strings={strings} />
           ))}
         </ul>
         {collapsible && (

@@ -67,6 +67,12 @@ export const envSchema = z.object({
 
   // PSI sampling cap (Phase 4).
   PSI_MAX_SAMPLES: intWithDefault(20),
+  // Per-request timeout (ms) for a single PageSpeed Insights call, applied via
+  // AbortController. PSI runs a full server-side Lighthouse lab pass per URL,
+  // which for heavy pages (and especially keyless/throttled callers) routinely
+  // exceeds 25s — so the default is generous. A timeout is a NON-FATAL
+  // per-(url,strategy) failure in PerformanceService, not an audit failure.
+  PSI_TIMEOUT_MS: intWithDefault(60000),
 
   // --- Broken-link verification pass (Phase 2 enrich). Re-checks links the
   // crawl flagged `is_broken` with a fresh, browser-like request to clear

@@ -12,6 +12,7 @@ describe('validateEnv', () => {
     expect(env.CRAWL_CONCURRENCY).toBe(5);
     expect(env.CRAWL_RATE_LIMIT).toBe(5);
     expect(env.PSI_MAX_SAMPLES).toBe(20);
+    expect(env.PSI_TIMEOUT_MS).toBe(60000);
     expect(env.OUTPUT_DIR).toBe('./output');
     expect(env.PSI_API_KEY).toBe('');
   });

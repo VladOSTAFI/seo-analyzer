@@ -68,8 +68,35 @@ interface CollectedPage {
 /** Insert batch size for chunked bulk inserts (§1 of the implementation plan). */
 const INSERT_CHUNK_SIZE = 500;
 
-/** Descriptive bot identity sent on every request (politeness, §8). */
-export const CRAWL_USER_AGENT = 'SEO-Audit-Bot/0.1 (+crawl)';
+/**
+ * Browser-like User-Agent sent on every crawl request. Anti-bot WAFs return HTTP
+ * 403 to robotic UAs (the old `SEO-Audit-Bot/0.1` string), so we present a
+ * current desktop Chrome identity instead. Kept in lockstep with the default of
+ * `LINK_VERIFY_USER_AGENT` (env.validation.ts) so the crawl + link-verification
+ * passes tell ONE consistent UA story — bump the Chrome version in both places
+ * together. robots.service.ts and sitemap.service.ts import this same constant.
+ */
+export const CRAWL_USER_AGENT =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+  '(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
+
+/**
+ * Browser-like request headers sent alongside {@link CRAWL_USER_AGENT}. A lone
+ * User-Agent still looks robotic to WAFs (no Accept / Sec-Fetch fingerprint), so
+ * we send the full desktop-Chrome header profile a real navigation would carry.
+ * Excludes `User-Agent` itself so callers merge it explicitly. Reusable by the
+ * robots/sitemap fetches too.
+ */
+export const BROWSER_HEADERS: Readonly<Record<string, string>> = {
+  Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+  'Accept-Language': 'en-US,en;q=0.9',
+  'Accept-Encoding': 'gzip, deflate, br',
+  'Upgrade-Insecure-Requests': '1',
+  'Sec-Fetch-Dest': 'document',
+  'Sec-Fetch-Mode': 'navigate',
+  'Sec-Fetch-Site': 'none',
+  'Sec-Fetch-User': '?1',
+};
 
 /** SPA root containers that hint at client-rendered (JS-only) markup. */
 const SPA_ROOT_SELECTORS = ['#app', '#root', '#__next', '[data-reactroot]'];
@@ -443,7 +470,14 @@ export class CrawlService {
         additionalMimeTypes: ['text/html', 'application/xhtml+xml'],
         preNavigationHooks: [
           (ctx, gotOptions): void => {
-            gotOptions.headers = { ...gotOptions.headers, 'User-Agent': CRAWL_USER_AGENT };
+            // Present a full browser-like header fingerprint (Fix A): a bot UA or
+            // a lone User-Agent trips anti-bot WAFs into HTTP 403. Our explicit
+            // values win over any got defaults; User-Agent is appended last.
+            gotOptions.headers = {
+              ...gotOptions.headers,
+              ...BROWSER_HEADERS,
+              'User-Agent': CRAWL_USER_AGENT,
+            };
             // Record request start time keyed by the request's unique id so the
             // handler can compute responseTimeMs = Date.now() - startTime.
             const reqId = (ctx as { request?: { uniqueKey?: string } }).request?.uniqueKey;
@@ -743,18 +777,33 @@ export class CrawlService {
             if (part.length) await tx.insert(sitemapEntries).values(part);
           }
           // Set-based diff: fill in_crawl/status_code/is_self_canonical/is_noindex
-          // from the matching pages row (normalized url join).
+          // from the matching pages row (normalized url join). Correlated
+          // subqueries (not an UPDATE..FROM join) so the target alias `se` stays
+          // visible to the page lookup — Postgres rejects referencing `se` from a
+          // FROM-clause JOIN ON (`invalid reference to FROM-clause entry`). The
+          // LEFT-JOIN semantics are preserved: unmatched entries get in_crawl=false
+          // and NULL columns rather than being dropped.
           await tx.execute(sql`
             update sitemap_entries se set
-              in_crawl = (p.url is not null),
-              status_code = p.status_code,
-              is_self_canonical = p.is_self_canonical,
-              is_noindex = (
-                coalesce(p.meta_robots ilike '%noindex%', false)
-                or coalesce(p.x_robots_tag ilike '%noindex%', false)
-              )
-            from (select ${auditId}::uuid as aid) k
-            left join pages p on p.audit_id = k.aid and p.url = se.loc
+              in_crawl = exists (
+                select 1 from pages p
+                where p.audit_id = se.audit_id and p.url = se.loc
+              ),
+              status_code = (
+                select p.status_code from pages p
+                where p.audit_id = se.audit_id and p.url = se.loc
+              ),
+              is_self_canonical = (
+                select p.is_self_canonical from pages p
+                where p.audit_id = se.audit_id and p.url = se.loc
+              ),
+              is_noindex = coalesce((
+                select
+                  coalesce(p.meta_robots ilike '%noindex%', false)
+                  or coalesce(p.x_robots_tag ilike '%noindex%', false)
+                from pages p
+                where p.audit_id = se.audit_id and p.url = se.loc
+              ), false)
             where se.audit_id = ${auditId}
           `);
         });

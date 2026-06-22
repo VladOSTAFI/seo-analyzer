@@ -21,6 +21,7 @@ function fakeEnv(overrides: Partial<Env> = {}): Env {
   return {
     PSI_API_KEY: '',
     CRAWL_RATE_LIMIT: 1000,
+    PSI_TIMEOUT_MS: 25_000,
     ...overrides,
   } as Env;
 }

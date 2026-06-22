@@ -494,7 +494,8 @@ export const REPORT_SECTIONS: ReportSection[] = [
       columns: [
         { header: 'Severity', key: 'severity', width: 10 },
         { header: 'Confidence', key: 'confidence', width: 12 },
-        { header: 'Page', key: 'url', width: 60 },
+        { header: 'Page (origin)', key: 'url', width: 60 },
+        { header: 'Duplicate URLs', key: 'duplicateUrls', width: 80 },
         { header: 'Content hash', key: 'contentHash', width: 40 },
         { header: 'Group size', key: 'duplicateCount', width: 12 },
         { header: 'Near-dup of', key: 'nearUrl', width: 60 },
@@ -503,16 +504,20 @@ export const REPORT_SECTIONS: ReportSection[] = [
     },
     ruleIds: ['dupe.content', 'dupe.near-content'],
     buildRows: (findings): SheetRow[] =>
-      findings.map((f) => ({
-        severity: f.severity,
-        confidence: f.confidence,
-        url: f.url ?? SITE_WIDE,
-        contentHash: str(f.detail, 'contentHash'),
-        duplicateCount: num(f.detail, 'duplicateCount'),
-        nearUrl: str(f.detail, 'nearUrl'),
-        hamming: num(f.detail, 'hamming'),
-        recommendation: remediationFor(f.ruleId)?.howToFix ?? null,
-      })),
+      findings.map((f) => {
+        const dupeUrls = f.detail?.duplicateUrls;
+        return {
+          severity: f.severity,
+          confidence: f.confidence,
+          url: f.url ?? SITE_WIDE,
+          duplicateUrls: Array.isArray(dupeUrls) ? dupeUrls.join('\n') : null,
+          contentHash: str(f.detail, 'contentHash'),
+          duplicateCount: num(f.detail, 'duplicateCount'),
+          nearUrl: str(f.detail, 'nearUrl'),
+          hamming: num(f.detail, 'hamming'),
+          recommendation: remediationFor(f.ruleId)?.howToFix ?? null,
+        };
+      }),
   },
 
   // ── index.* (canonical + robots; url heuristics separate) ──────────────────

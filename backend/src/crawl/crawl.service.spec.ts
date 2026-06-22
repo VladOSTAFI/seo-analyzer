@@ -359,6 +359,7 @@ describe('CrawlService.crawl', () => {
       CRAWL_CONCURRENCY: 2,
       CRAWL_RATE_LIMIT: 5,
       PSI_MAX_SAMPLES: 20,
+      PSI_TIMEOUT_MS: 60000,
       LINK_VERIFY_ENABLED: true,
       LINK_VERIFY_CONCURRENCY: 5,
       LINK_VERIFY_TIMEOUT_MS: 10000,
